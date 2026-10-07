@@ -19,7 +19,7 @@ enum {
     MSG_READY,              /* %s version, %s menu address */
     MSG_MENU_UNAVAILABLE,   /* %s version, %d port */
     MSG_NO_VPAD,
-    MSG_REST_MODE,
+    MSG_REST_MODE,          /* paused, not stopped: resumes after waking */
     MSG_STOPPED,
     MSG_CONTROLLER,         /* the word used when the model is unknown */
     MSG_COUNT

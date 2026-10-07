@@ -59,6 +59,10 @@ $(BUILD)/test_config: src/config.c src/hotkey.c src/netinfo.c src/log.c src/util
 $(BUILD)/test_lock: src/lock.c src/log.c src/util.c tests/test_lock.c | $(BUILD)
 	cc $(HOST_CFLAGS) -o $@ $^
 
+# Rest mode: when to suspend and when to resume.
+$(BUILD)/test_suspend: src/suspend.c tests/test_suspend.c | $(BUILD)
+	cc $(HOST_CFLAGS) -o $@ $^
+
 src/icon_data.c: assets/icon0.png
 	{ echo '/* Generated from assets/icon0.png by make. */'; \
 	  echo 'const unsigned char icon_png_data[] = {'; xxd -i < $<; echo '};'; \
@@ -75,7 +79,7 @@ $(BUILD)/test_i18n: src/i18n.c tests/test_i18n.c | $(BUILD)
 $(BUILD)/test_usb: src/usb_desc.c src/evstream.c tests/test_usb.c | $(BUILD)
 	cc $(HOST_CFLAGS) -o $@ $^
 
-test: $(BUILD)/test_usb $(BUILD)/test_lock $(BUILD)/test_config $(BUILD)/test_vpad $(BUILD)/test_crypto $(BUILD)/test_profiles $(BUILD)/test_host $(BUILD)/test_le $(BUILD)/test_web $(BUILD)/test_launcher $(BUILD)/test_i18n
+test: $(BUILD)/test_usb $(BUILD)/test_lock $(BUILD)/test_config $(BUILD)/test_vpad $(BUILD)/test_crypto $(BUILD)/test_profiles $(BUILD)/test_host $(BUILD)/test_le $(BUILD)/test_web $(BUILD)/test_launcher $(BUILD)/test_i18n $(BUILD)/test_suspend
 	./$(BUILD)/test_usb
 	./$(BUILD)/test_lock
 	./$(BUILD)/test_config
@@ -87,6 +91,7 @@ test: $(BUILD)/test_usb $(BUILD)/test_lock $(BUILD)/test_config $(BUILD)/test_vp
 	./$(BUILD)/test_web
 	./$(BUILD)/test_launcher
 	./$(BUILD)/test_i18n
+	./$(BUILD)/test_suspend
 
 # Malformed input through every parser, under the sanitizers.
 SAN := -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer

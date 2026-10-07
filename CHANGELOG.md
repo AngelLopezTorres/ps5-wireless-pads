@@ -5,6 +5,10 @@ version is set in `src/version.h` and is also in the first line of the log, in
 the start-up notification, on the web page, and in the binary
 (`strings PadBridge-PS5-*.elf | grep padbridge-version`).
 
+## Unreleased
+
+- Rest mode: PadBridge no longer exits. It pauses on the way to rest (pads, virtual pads, Bluetooth and the menu are released; pairings kept) and, once the console has been awake for 5 s, opens them again with tries that back off (2, 4, 8, 16 s). Stopping (flag, signal) still works while paused.
+
 ## 0.1.9-beta
 
 - Web UI: new look of its own: dark graphite with lime / ember accents, angular cards and badges, a sidebar with an original "PadBridge" hero graphic (inline SVG), new logo mark and condensed uppercase type.

@@ -25,8 +25,12 @@
  *
  * Stopping: the menu's button, or create /data/padbridge/stop. It disconnects
  * its pads, removes its virtual pads, puts back the controller setting it
- * changed, and exits. It does the same by itself when the console starts
- * going to rest mode (read from SceSystemStateMgrInfo), so nothing of it is left half-way across a sleep.
+ * changed, and exits.
+ * Rest mode (read from SceSystemStateMgrInfo, see suspend.h): on the way down
+ * it lets go of the same things (pads, virtual pads, the chip, the menu) but
+ * keeps running, paused; once the console has been awake for a few seconds it
+ * opens them again and paired pads reconnect as after a start. Nothing of it is
+ * left half-way across a sleep.
  * Pairing: the menu's button, or create /data/padbridge/pair.
  */
 #include "hci_usb.h"
@@ -40,6 +44,7 @@
 #include "ps5_apps.h"
 #include "ps5_sysinfo.h"
 #include "profiles.h"
+#include "suspend.h"
 #include "ps5_vpad.h"
 #include "util.h"
 #include "version.h"
@@ -91,6 +96,9 @@ static int g_vpad_ok;                   /* virtual pads are possible */
 static int g_bt_attempt;                /* Bluetooth tries made in this round */
 static long g_bt_next;                  /* when the next one is due */
 static int g_bt_plain_creds;            /* the chip answered only without raised credentials */
+static int g_bt_after_rest;             /* this round follows rest mode: tries back off */
+static int g_web_tries;                 /* menu tries left after rest mode */
+static long g_web_next;
 
 static void on_signal(int sig)
 {
@@ -149,8 +157,9 @@ static void on_idle(void *ud)
     web_poll(g_web);
 }
 
-static void bt_begin(void)
+static void bt_begin(int after_rest)
 {
+    g_bt_after_rest = after_rest;
     g_bt_attempt = 0;
     g_bt_next = 0;
     g_bt_reason[0] = '\0';
@@ -195,7 +204,8 @@ static void bt_try(long now)
         notify("%s", tr(MSG_BT_NO_ANSWER));
         return;
     }
-    g_bt_next = now + 3000;
+    /* After rest mode the chip may still be waking: wait longer each time. */
+    g_bt_next = now + (g_bt_after_rest ? suspend_backoff_ms(attempt) : 3000);
 }
 
 static void bt_lost(const char *why)
@@ -207,6 +217,64 @@ static void bt_lost(const char *why)
     snprintf(g_bt_reason, sizeof g_bt_reason, "Bluetooth lost (%s). Press Retry.", why);
     g_bt_reason_key = "lost";
     notify("%s", tr(MSG_BT_LOST));
+}
+
+/* ---- rest mode ------------------------------------------------------------- */
+
+static web_cfg g_wc;                    /* the menu's settings, to start it again */
+
+/* The menu, and the notification with its address (which may have changed
+ * across a sleep). After rest mode a failure is tried again a few times. */
+static void web_open(long now)
+{
+    char ip[16], url[64];
+
+    g_web = web_start(&g_wc, WEB_PORT);
+    local_ip(ip);
+    snprintf(url, sizeof url, "http://%s:%d", ip, WEB_PORT);
+    if (g_web) {
+        g_web_tries = 0;
+        notify(tr(MSG_READY), PADBRIDGE_VERSION, url);
+        return;
+    }
+    if (g_web_tries > 0 && --g_web_tries > 0) {
+        g_web_next = now + suspend_backoff_ms(RESUME_TRIES - g_web_tries);
+        log_line("menu not available yet; %d tr%s left", g_web_tries, g_web_tries == 1 ? "y" : "ies");
+        return;
+    }
+    g_web_tries = 0;
+    notify(tr(MSG_MENU_UNAVAILABLE), PADBRIDGE_VERSION, WEB_PORT);
+}
+
+/* On the way to rest mode: the same teardown as a stop, minus the exit and
+ * the lock. pads.db (pairings) is not touched. Assumption: whether the chip's
+ * USB handle, the virtual pads or the menu's socket stay valid across a sleep
+ * is not known, so everything is closed now and opened afresh on waking. */
+static void rest_suspend(void)
+{
+    log_line("rest mode: suspending (pads, Bluetooth, menu)");
+    notify("%s", tr(MSG_REST_MODE));
+    host_close(g_host);                 /* our links; removes our virtual pads; closes the chip */
+    g_host = NULL;
+    if (g_vpad_ok) {
+        g_bt_state = WEB_BT_TRYING;     /* tried again on waking */
+        vpad_creds_restore();
+    }
+    web_stop(g_web);
+    g_web = NULL;
+    g_web_tries = 0;
+    log_line("rest mode: suspended, waiting for the console to wake");
+}
+
+/* Awake for the grace period: open again what rest_suspend closed, through
+ * the start-up paths, each with its bounded tries. */
+static void rest_resume(long now)
+{
+    log_line("rest mode over: resuming after %d ms awake", SUSPEND_GRACE_MS);
+    g_web_tries = RESUME_TRIES;
+    web_open(now);
+    if (g_vpad_ok) bt_begin(1);         /* paired pads then reconnect by themselves */
+    else log_line("rest mode over: no virtual pads, Bluetooth left alone");
 }
 
 /* ---- flags ---------------------------------------------------------------- */
@@ -230,10 +298,9 @@ static void check_flags(long now)
 
 int main(void)
 {
-    web_cfg wc;
-    char ip[16], url[64];
     const char *why = "stop requested";
     long last_power = 0;
+    suspend_t rest;
 
     mkdir(STATE_DIR, 0755);
     log_open(LOG_PATH);
@@ -258,25 +325,18 @@ int main(void)
 
 
     /* The menu first: it is what explains everything that follows. */
-    memset(&wc, 0, sizeof wc);
-    wc.host = &g_host;
-    wc.stop = &g_web_stop;
-    wc.retry = &g_retry;
-    wc.bt_state = &g_bt_state;
-    wc.bt_reason = g_bt_reason;
-    wc.bt_reason_key = &g_bt_reason_key;
-    wc.lang_path = LANG_PATH;
-    wc.log_path = LOG_PATH;
-    wc.version = PADBRIDGE_VERSION;
-    wc.press_ps = web_press_ps;
-    g_web = web_start(&wc, WEB_PORT);
-
-    local_ip(ip);
-    snprintf(url, sizeof url, "http://%s:%d", ip, WEB_PORT);
-    if (g_web)
-        notify(tr(MSG_READY), PADBRIDGE_VERSION, url);
-    else
-        notify(tr(MSG_MENU_UNAVAILABLE), PADBRIDGE_VERSION, WEB_PORT);
+    memset(&g_wc, 0, sizeof g_wc);
+    g_wc.host = &g_host;
+    g_wc.stop = &g_web_stop;
+    g_wc.retry = &g_retry;
+    g_wc.bt_state = &g_bt_state;
+    g_wc.bt_reason = g_bt_reason;
+    g_wc.bt_reason_key = &g_bt_reason_key;
+    g_wc.lang_path = LANG_PATH;
+    g_wc.log_path = LOG_PATH;
+    g_wc.version = PADBRIDGE_VERSION;
+    g_wc.press_ps = web_press_ps;
+    web_open(now_ms());
 
     sysinfo_log();
 
@@ -300,11 +360,24 @@ int main(void)
         g_bt_reason_key = "novpad";
         notify("%s", tr(MSG_NO_VPAD));
     } else {
-        bt_begin();
+        bt_begin(0);
     }
 
+    suspend_init(&rest);
     while (!g_stop && !g_web_stop) {
         long now;
+
+        /* Paused for rest mode: read the power state now and then, and
+         * nothing else but the stop flag and what a removed virtual pad
+         * still has pending. A signal cuts the sleep short. */
+        if (rest.state != SUS_ACTIVE) {
+            usleep((useconds_t)suspend_poll_ms(&rest) * 1000);
+            now = now_ms();
+            if (g_vpad_ok) vpad_poll(now);
+            if (suspend_step(&rest, power_state(), now) == SUS_DO_RESUME) rest_resume(now);
+            check_flags(now);
+            continue;
+        }
 
         if (g_host) host_poll(g_host, 4);
         else usleep(4000);
@@ -312,16 +385,15 @@ int main(void)
         web_poll(g_web);
         if (g_vpad_ok) vpad_poll(now);
 
-        /* Rest mode on its way: leave cleanly before it, not after. */
-        if (now - last_power >= 200) {
-            int ps = power_state();
+        /* Rest mode on its way: let go cleanly before it, not after. */
+        if (now - last_power >= suspend_poll_ms(&rest)) {
             last_power = now;
-            if (ps == POWER_GOING_TO_REST || ps == POWER_IN_REST) {
-                why = "rest mode";
-                notify("%s", tr(MSG_REST_MODE));
-                break;
+            if (suspend_step(&rest, power_state(), now) == SUS_DO_SUSPEND) {
+                rest_suspend();
+                continue;
             }
         }
+        if (!g_web && g_web_tries > 0 && now >= g_web_next) web_open(now);
 
         /* The Bluetooth: tries, loss, and the menu's retry button. */
         if (g_bt_state == WEB_BT_TRYING && now >= g_bt_next) bt_try(now);
@@ -330,7 +402,7 @@ int main(void)
             g_retry = 0;
             if (g_vpad_ok && g_bt_state == WEB_BT_FAILED) {
                 log_line("retrying Bluetooth at the user's request");
-                bt_begin();
+                bt_begin(0);
             } else {
                 log_line("retry ignored (virtual pads not available, or not failed)");
             }
