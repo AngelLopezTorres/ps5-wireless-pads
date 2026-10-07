@@ -5,7 +5,10 @@ version is set in `src/version.h` and is also in the first line of the log, in
 the start-up notification, on the web page, and in the binary
 (`strings PadBridge-PS5-*.elf | grep padbridge-version`).
 
-## Unreleased
+## 0.2.0-beta
+
+First release of the ps5-wireless-pads fork (based on PadBridge PS5 0.1.9-beta). Not yet tested on a console.
+
 
 - Rest mode: PadBridge no longer exits. It pauses on the way to rest (pads, virtual pads, Bluetooth and the menu are released; pairings kept) and, once the console has been awake for 5 s, opens them again with tries that back off (2, 4, 8, 16 s). Stopping (flag, signal) still works while paused.
 - Loading PadBridge while another copy runs now replaces it: the copy holding the lock is confirmed as PadBridge in the process list (sysctl KERN_PROC, thread name `padbridge`), sent SIGTERM, and waited for up to 5 s; no SIGKILL. Signals are installed with sigaction.
