@@ -1,4 +1,4 @@
-<p align="center"><img src="assets/logo.png" width="140" alt="ps5-wireless-pads"></p>
+<p align="center"><img src="assets/ps5-wireless-pads-logo.svg" width="160" alt="ps5-wireless-pads logo"></p>
 
 <h1 align="center">ps5-wireless-pads</h1>
 

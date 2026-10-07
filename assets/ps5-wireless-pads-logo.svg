@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256" role="img" aria-label="ps5-wireless-pads logo">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0b1026"/>
+      <stop offset="1" stop-color="#1b0f3a"/>
+    </linearGradient>
+    <linearGradient id="wave" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#00e5ff"/>
+      <stop offset="1" stop-color="#ff3df2"/>
+    </linearGradient>
+    <linearGradient id="pad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#c9d3ff"/>
+    </linearGradient>
+    <filter id="glow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="4" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+
+  <rect x="8" y="8" width="240" height="240" rx="56" fill="url(#bg)"/>
+  <rect x="8" y="8" width="240" height="240" rx="56" fill="none" stroke="url(#wave)" stroke-opacity=".55" stroke-width="3"/>
+
+  <!-- wireless arcs -->
+  <g fill="none" stroke="url(#wave)" stroke-linecap="round" filter="url(#glow)">
+    <path d="M100 86 A40 40 0 0 1 156 86" stroke-width="10"/>
+    <path d="M80 66 A68 68 0 0 1 176 66" stroke-width="10" stroke-opacity=".8"/>
+    <path d="M60 46 A96 96 0 0 1 196 46" stroke-width="10" stroke-opacity=".55"/>
+  </g>
+  <circle cx="128" cy="104" r="8" fill="#00e5ff" filter="url(#glow)"/>
+
+  <!-- gamepad -->
+  <path fill="url(#pad)" d="M78 128 h100 c22 0 34 14 38 36 l9 42 c4 20-14 32-30 20 l-26-22 h-82 l-26 22 c-16 12-34 0-30-20 l9-42 c4-22 16-36 38-36 z"/>
+  <!-- d-pad -->
+  <g fill="#1b0f3a">
+    <rect x="70" y="158" width="34" height="12" rx="3"/>
+    <rect x="81" y="147" width="12" height="34" rx="3"/>
+  </g>
+  <!-- face buttons (neutral dots) -->
+  <circle cx="178" cy="150" r="7" fill="#00b8d4"/>
+  <circle cx="194" cy="165" r="7" fill="#ff3df2"/>
+  <circle cx="162" cy="165" r="7" fill="#7c4dff"/>
+  <circle cx="178" cy="180" r="7" fill="#00e676"/>
+  <!-- sticks -->
+  <circle cx="110" cy="196" r="10" fill="#1b0f3a"/>
+  <circle cx="146" cy="196" r="10" fill="#1b0f3a"/>
+</svg>
