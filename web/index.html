@@ -1,0 +1,689 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>PadBridge PS5</title>
+<style>
+:root {
+  --ink: #f4efe6; --mute: #9a948a; --void: #0c0b0f; --deck: #15131a; --card: #1c1922; --edge: #2c2833;
+  --lime: #c8ff3d; --ember: #ff6a2b; --rose: #ff3d7f; --good: #c8ff3d; --warn: #ffb23d; --bad: #ff3d5a;
+  --glow: 0 0 0 2px var(--lime);
+  --cyan: var(--lime); --blue: var(--ember); --violet: var(--rose);
+}
+* { box-sizing: border-box; }
+html { background: var(--void); }
+body { margin: 0; min-height: 100vh; color: var(--ink);
+  font: 16px/1.5 "Bahnschrift", "DIN Alternate", "Barlow", "Segoe UI", system-ui, sans-serif;
+  background:
+    repeating-linear-gradient(135deg, rgba(255,255,255,.018) 0 2px, transparent 2px 14px),
+    radial-gradient(900px 500px at 100% 0, rgba(255,106,43,.14), transparent 60%),
+    radial-gradient(700px 500px at 0 100%, rgba(200,255,61,.07), transparent 60%), var(--void); }
+.wrap { max-width: 1200px; margin: 0 auto; padding: 18px 24px 40px; }
+.ttl { text-transform: uppercase; letter-spacing: 3px; font-weight: 800; }
+
+/* top bar */
+.bar { display: flex; align-items: center; justify-content: space-between; padding: 6px 0 16px; border-bottom: 2px solid var(--edge); margin-bottom: 18px; }
+.brand { display: flex; align-items: center; }
+.mark { width: 46px; height: 46px; margin-right: 14px; }
+.brand h1 { margin: 0; font-size: 24px; font-weight: 900; letter-spacing: 4px; text-transform: uppercase; line-height: 1.1; }
+.brand h1 b { color: var(--lime); }
+.ver { display: inline-block; color: var(--void); background: var(--ember); font-size: 12px; font-weight: 800; padding: 0 7px; margin-right: 8px; letter-spacing: 1px;
+  clip-path: polygon(6px 0, 100% 0, calc(100% - 6px) 100%, 0 100%); }
+.by { display: inline-block; color: var(--mute); font-size: 13px; direction: ltr; unicode-bidi: isolate; }
+.by a { color: var(--lime); font-weight: 800; text-decoration: none; }
+.by a:hover, .by a:focus { outline: none; text-decoration: underline; }
+.live { display: flex; align-items: center; padding: 8px 16px; background: var(--deck); border: 2px solid var(--edge);
+  font-size: 14px; font-weight: 800; text-transform: uppercase; letter-spacing: 1.5px;
+  clip-path: polygon(10px 0, 100% 0, calc(100% - 10px) 100%, 0 100%); }
+.live i { width: 12px; height: 12px; margin-right: 10px; background: var(--mute); transform: rotate(45deg); }
+.live.ok i { background: var(--good); box-shadow: 0 0 10px var(--good); }
+.live.wait i { background: var(--warn); animation: blink 1s infinite; }
+.live.bad i { background: var(--bad); }
+@keyframes blink { 50% { opacity: .25; } }
+
+/* layout: hero banner + side column */
+.grid { display: grid; grid-template-columns: 340px 1fr; grid-gap: 22px; align-items: start; }
+.side > * { margin-bottom: 18px; }
+.banner { position: relative; overflow: hidden; border: 2px solid var(--edge); background: #121016; height: 150px; }
+.banner svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+.panel { background: var(--deck); border: 2px solid var(--edge); border-left: 4px solid var(--ember); padding: 18px 20px; }
+.label { margin: 0 0 12px; font-size: 12px; font-weight: 800; letter-spacing: 3px; text-transform: uppercase; color: var(--ember); }
+.facts { display: grid; grid-template-columns: repeat(3, 1fr); grid-gap: 8px; }
+.fact { background: var(--void); padding: 10px 10px; border-bottom: 3px solid var(--lime); }
+.fact span { display: block; color: var(--mute); font-size: 11px; text-transform: uppercase; letter-spacing: 1px; }
+.fact strong { display: block; font-size: 20px; font-weight: 900; }
+.note { color: var(--mute); font-size: 14px; margin: 14px 0 0; }
+.note b { color: var(--lime); }
+.note.alert { color: var(--bad); }
+.ring { position: relative; height: 12px; background: var(--void); overflow: hidden; margin: 4px 0 12px;
+  background-image: repeating-linear-gradient(90deg, transparent 0 18px, var(--deck) 18px 21px); }
+.ring b { position: absolute; left: 0; top: 0; bottom: 0; width: 0; background: repeating-linear-gradient(90deg, var(--lime) 0 18px, transparent 18px 21px); transition: width .9s linear; }
+
+/* buttons */
+.btn { font: inherit; font-weight: 800; font-size: 15px; text-transform: uppercase; letter-spacing: 1px; min-height: 52px; padding: 0 22px;
+  border: 2px solid var(--edge); background: var(--card); color: var(--ink); cursor: pointer; border-radius: 4px;
+  transition: transform .08s, box-shadow .15s, border-color .15s, background .15s; }
+.btn:hover, .btn:focus { outline: none; border-color: var(--lime); box-shadow: var(--glow); }
+.btn:active { transform: translateY(2px); }
+.btn:disabled { opacity: .4; cursor: default; box-shadow: none; border-color: var(--edge); }
+.btn.go { width: 100%; min-height: 70px; font-size: 18px; border: 0; color: var(--void); background: var(--lime);
+  clip-path: polygon(14px 0, 100% 0, 100% calc(100% - 14px), calc(100% - 14px) 100%, 0 100%, 0 14px); }
+.btn.go:hover, .btn.go:focus { background: #e2ff8a; box-shadow: none; }
+.btn.ps { border-color: rgba(200,255,61,.5); color: var(--lime); }
+.btn.hum { border-color: rgba(255,106,43,.6); color: #ffa37a; }
+.btn.cut { background: transparent; border-color: rgba(255,61,90,.5); color: #ff8094; }
+.btn.armed { background: var(--bad); border-color: var(--bad); color: #fff; }
+.btn.small { min-height: 42px; padding: 0 14px; font-size: 13px; }
+
+/* controller cards */
+.head { display: flex; align-items: baseline; justify-content: space-between; margin: 0 0 12px; }
+.head h2 { margin: 0; font-size: 18px; font-weight: 900; text-transform: uppercase; letter-spacing: 3px; }
+.head h2:before { content: ""; display: inline-block; width: 10px; height: 10px; background: var(--ember); margin: 0 10px 2px 0; transform: rotate(45deg); }
+.head span { color: var(--mute); font-size: 14px; }
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(380px, 1fr)); grid-gap: 16px; margin-bottom: 28px; }
+.card { position: relative; padding: 16px 18px; background: linear-gradient(160deg, var(--card), var(--deck)); border: 2px solid var(--edge); }
+.card { --acc: var(--lime); }
+.card { border-top: 4px solid var(--acc); }
+.ctop { display: flex; align-items: center; justify-content: space-between; }
+.model { font-size: 19px; font-weight: 900; }
+.slot { font-weight: 900; font-size: 18px; color: var(--void); background: var(--acc); padding: 2px 14px;
+  clip-path: polygon(8px 0, 100% 0, calc(100% - 8px) 100%, 0 100%); }
+.sub { color: var(--mute); font-size: 13px; margin: 0 0 6px; font-family: ui-monospace, Menlo, Consolas, monospace; }
+.input { direction: ltr; margin: 0 -6px 4px; }
+.pad { display: block; width: 100%; height: auto; }
+.pad .body { fill: #232029; stroke: #3a3542; stroke-width: 2; }
+.pad .k { fill: #2e2a35; stroke: #4a4453; stroke-width: 1.5; transition: fill .05s; }
+.pad text { fill: #bdb6aa; font: 800 11px "Bahnschrift", system-ui, sans-serif; text-anchor: middle; dominant-baseline: central; pointer-events: none; }
+.pad .on .k { fill: var(--acc); stroke: #fff; }
+.pad .on text { fill: #0c0b0f !important; }
+.pad .on .k { fill: var(--acc) !important; }
+.pad .face text { font-size: 13px; }
+.pad .tf { fill: var(--acc); }
+.pad .well { fill: #141217; stroke: #4a4453; stroke-width: 1.5; }
+.pad .nub { fill: #3a3542; stroke: #6a6375; stroke-width: 2; }
+.pad .on .nub { fill: var(--acc); }
+.chips { display: none; }
+.batt { display: flex; align-items: center; font-size: 13px; color: var(--mute); margin: 6px 0 12px; min-height: 20px; }
+.cell { width: 44px; height: 14px; margin-right: 10px; position: relative; display: flex; gap: 2px; padding: 0; }
+.cell b { display: block; height: 100%; width: 0; background: var(--good); }
+.cell:before { content: ""; position: absolute; inset: 0; border: 2px solid var(--mute); }
+.acts { display: grid; grid-template-columns: 1fr 1fr 1fr; grid-gap: 8px; }
+.acts .btn { padding: 0 6px; font-size: 13px; line-height: 1.2; }
+.empty { border: 2px dashed var(--edge); padding: 40px 28px; color: var(--mute); text-align: center; font-size: 16px; }
+
+/* paired list */
+.list { border: 2px solid var(--edge); margin-bottom: 28px; background: var(--deck); }
+.item { display: flex; align-items: center; padding: 12px 16px; border-top: 1px solid var(--edge); }
+.item:first-child { border-top: 0; }
+.dot { width: 10px; height: 10px; background: var(--edge); margin-right: 14px; transform: rotate(45deg); }
+.dot.on { background: var(--good); box-shadow: 0 0 8px var(--good); }
+.who { flex: 1; }
+.who strong { display: block; font-size: 16px; }
+.who span { color: var(--mute); font-size: 13px; font-family: ui-monospace, Menlo, Consolas, monospace; unicode-bidi: embed; direction: ltr; }
+.tag { font-size: 11px; font-weight: 800; padding: 2px 8px; margin-right: 12px; color: var(--ember); border: 1px solid var(--ember); }
+
+/* log */
+details { border: 2px solid var(--edge); background: var(--deck); margin-bottom: 28px; }
+summary { list-style: none; cursor: pointer; padding: 16px 20px; font-size: 16px; font-weight: 900; text-transform: uppercase; letter-spacing: 3px;
+  display: flex; align-items: center; justify-content: space-between; }
+summary::-webkit-details-marker { display: none; }
+.sh { font-size: 13px; color: var(--lime); }
+.sh.h, details[open] .sh.s { display: none; }
+details[open] .sh.h { display: inline; }
+summary:hover, summary:focus { outline: none; box-shadow: inset var(--glow); }
+.logbox { padding: 0 20px 18px; }
+pre { margin: 0 0 12px; max-height: 420px; overflow: auto; white-space: pre-wrap; word-break: break-all;
+  font: 12px/1.45 ui-monospace, Menlo, Consolas, monospace; color: #c9ff7a; background: #08070a; border: 1px solid var(--edge); padding: 12px; }
+
+footer { display: flex; align-items: center; justify-content: space-between; border-top: 2px solid var(--edge); padding-top: 18px; }
+footer p { margin: 0 24px 0 0; color: var(--mute); font-size: 13px; max-width: 640px; }
+
+.toast { position: fixed; left: 50%; bottom: 30px; transform: translateX(-50%) translateY(140px); padding: 12px 22px;
+  background: var(--lime); color: var(--void); font-weight: 800; transition: transform .25s; }
+.toast.show { transform: translateX(-50%) translateY(0); }
+
+/* language */
+.right { display: flex; align-items: center; }
+#langbox { position: relative; margin-left: 12px; z-index: 40; }
+#langbtn { display: flex; align-items: center; font: inherit; font-size: 14px; font-weight: 800; color: var(--ink); text-transform: uppercase; letter-spacing: 1px;
+  padding: 8px 14px; background: var(--deck); border: 2px solid var(--edge); cursor: pointer; }
+#langbtn:hover, #langbtn:focus, .langopt:hover, .langopt:focus { outline: none; border-color: var(--lime); box-shadow: var(--glow); }
+.flag { display: inline-block; width: 26px; height: 18px; flex: 0 0 26px; overflow: hidden; margin-right: 10px; box-shadow: 0 0 0 1px rgba(255,255,255,.3); }
+.flag svg { display: block; width: 100%; height: 100%; }
+#langlist { display: none; position: absolute; right: 0; top: calc(100% + 8px); z-index: 60; width: 420px;
+  max-width: calc(100vw - 40px); grid-template-columns: 1fr 1fr; grid-gap: 6px; padding: 10px;
+  background: var(--deck); border: 2px solid var(--lime); box-shadow: 0 18px 40px rgba(0,0,0,.7); }
+#langlist.show { display: grid; }
+.langopt { display: flex; align-items: center; width: 100%; font: inherit; font-size: 15px; font-weight: 700; color: var(--ink);
+  padding: 9px 10px; border: 2px solid var(--edge); background: var(--void); cursor: pointer; text-align: left; }
+.langopt[data-state="on"] { color: var(--void); border-color: transparent; background: var(--lime); }
+
+/* Arabic / Hebrew */
+[dir="rtl"] .mark { margin: 0 0 0 14px; }
+[dir="rtl"] .live i, [dir="rtl"] .flag { margin: 0 0 0 10px; }
+[dir="rtl"] #langbox { margin: 0 12px 0 0; }
+[dir="rtl"] #langlist { right: auto; left: 0; }
+[dir="rtl"] .langopt { text-align: right; }
+[dir="rtl"] .ring b { left: auto; right: 0; }
+[dir="rtl"] .dot { margin: 0 0 0 14px; }
+[dir="rtl"] .tag { margin: 0 0 0 12px; }
+[dir="rtl"] .cell { margin: 0 0 0 10px; }
+[dir="rtl"] .panel { border-left: 2px solid var(--edge); border-right: 4px solid var(--ember); }
+[dir="rtl"] .head h2:before { margin: 0 0 2px 10px; }
+[dir="rtl"] .ver { margin: 0 0 0 8px; }
+[dir="rtl"] footer p { margin: 0 0 0 24px; }
+.sub { direction: ltr; }
+[dir="rtl"] .sub, [dir="rtl"] .by { text-align: right; }
+
+@media (max-width: 900px) {
+  .grid { grid-template-columns: 1fr; }
+  footer { flex-direction: column; align-items: flex-start; }
+  footer p { margin: 0 0 14px; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="bar">
+    <div class="brand">
+      <svg class="mark" viewBox="0 0 48 48" aria-hidden="true">
+        <path d="M24 2 L46 24 L24 46 L2 24 Z" fill="#15131a" stroke="#c8ff3d" stroke-width="2.5"/>
+        <path d="M11 28 Q24 12 37 28" fill="none" stroke="#ff6a2b" stroke-width="3.5" stroke-linecap="square"/>
+        <path d="M11 28 V33 M37 28 V33 M17 22.5 V33 M31 22.5 V33 M24 20 V33" stroke="#c8ff3d" stroke-width="2"/>
+      </svg>
+      <div><h1><b>Pad</b>Bridge PS5</h1><span class="ver" id="ver">&nbsp;</span><span class="by">Developed by <a href="https://github.com/X-F1REBALL-X" target="_blank" rel="noopener">X-F1REBALL-X</a></span></div>
+    </div>
+    <div class="right">
+      <div class="live wait" id="live"><i></i><span id="liveText" data-i18n="connecting">Connecting…</span></div>
+      <div id="langbox">
+        <button type="button" class="langbtn" id="langbtn" aria-haspopup="true"><span class="flag" id="langflag"></span><span data-i18n="language">Language</span></button>
+        <div id="langlist" role="menu" data-state="closed"></div>
+      </div>
+    </div>
+  </header>
+
+  <div class="grid">
+  <aside class="side">
+    <div class="banner" aria-hidden="true">
+      <svg viewBox="0 0 340 150" preserveAspectRatio="xMidYMid slice">
+        <defs>
+          <linearGradient id="hb" x1="0" x2="1"><stop offset="0" stop-color="#c8ff3d"/><stop offset="1" stop-color="#ff6a2b"/></linearGradient>
+          <pattern id="hg" width="16" height="16" patternUnits="userSpaceOnUse"><path d="M16 0 H0 V16" fill="none" stroke="#24212b" stroke-width="1"/></pattern>
+        </defs>
+        <rect width="340" height="150" fill="url(#hg)"/>
+        <path d="M0 150 L120 40 L340 40 L340 150 Z" fill="#ff6a2b" opacity=".07"/>
+        <g fill="none" stroke="url(#hb)" stroke-width="4" stroke-linecap="square">
+          <path d="M62 104 Q170 10 278 104"/>
+          <path d="M40 104 H300"/>
+        </g>
+        <g stroke="#c8ff3d" stroke-width="2" opacity=".8">
+          <path d="M100 104 V66 M135 104 V48 M170 104 V42 M205 104 V48 M240 104 V66"/>
+        </g>
+        <g transform="translate(18 92)"><path d="M10 0 H34 Q44 0 46 12 L48 22 Q48 30 40 26 L34 20 H10 L4 26 Q-4 30 -4 22 L-2 12 Q0 0 10 0 Z" fill="#1c1922" stroke="#c8ff3d" stroke-width="2.5"/><circle cx="34" cy="9" r="2.5" fill="#ff6a2b"/></g>
+        <g transform="translate(278 92)"><path d="M10 0 H34 Q44 0 46 12 L48 22 Q48 30 40 26 L34 20 H10 L4 26 Q-4 30 -4 22 L-2 12 Q0 0 10 0 Z" fill="#1c1922" stroke="#ff6a2b" stroke-width="2.5"/><circle cx="34" cy="9" r="2.5" fill="#c8ff3d"/></g>
+        <g fill="#ff6a2b"><rect x="164" y="24" width="12" height="12" transform="rotate(45 170 30)"/></g>
+        <text x="170" y="136" fill="#f4efe6" font-family="Bahnschrift, system-ui, sans-serif" font-weight="900" font-size="14" letter-spacing="6" text-anchor="middle">ANY PAD → PS5</text>
+      </svg>
+    </div>
+    <div class="panel">
+      <p class="label" data-i18n="status">Status</p>
+      <div class="facts">
+        <div class="fact"><span data-i18n="bluetooth">Bluetooth</span><strong id="fBt">–</strong></div>
+        <div class="fact"><span data-i18n="connected">Connected</span><strong id="fPads">0 / 4</strong></div>
+        <div class="fact"><span data-i18n="paired">Paired</span><strong id="fPaired">0</strong></div>
+      </div>
+      <p class="note" id="reason"></p>
+      <div id="retryRow" hidden style="margin-top:14px"><button class="btn" id="retry" data-i18n="retryBt">Retry Bluetooth</button></div>
+    </div>
+    <div class="panel pair">
+      <p class="label" data-i18n="pairing">Pairing</p>
+      <div class="ring"><b id="ring"></b></div>
+      <p class="note" id="pairText" style="margin:0 0 14px"></p>
+      <button class="btn go" id="pair" data-i18n="pairBtn">Pair a controller (60 s)</button>
+    </div>
+  </aside>
+
+  <main>
+  <div class="head"><h2 data-i18n="connectedTitle">Connected controllers</h2><span id="padsHint"></span></div>
+  <div class="cards" id="cards"></div>
+
+  <div class="head"><h2 data-i18n="pairedTitle">Paired controllers</h2><span data-i18n="switchOn">Switch one on to connect it</span></div>
+  <div class="list" id="paired"></div>
+
+  <details id="logBox">
+    <summary><span data-i18n="log">Log</span><span class="sh s" data-i18n="show">Show</span><span class="sh h" data-i18n="hide">Hide</span></summary>
+    <div class="logbox">
+      <pre id="log" data-i18n="loading">Loading…</pre>
+      <button class="btn small" id="logRefresh" data-i18n="refresh">Refresh</button>
+    </div>
+  </details>
+  </main>
+  </div>
+
+  <footer>
+    <p data-i18n="footer">Closing this page leaves PadBridge running. Stop it before loading the ELF again: controllers disconnect and Bluetooth is left as it was.</p>
+    <button class="btn cut" id="stop" data-i18n="stopBtn">Stop PadBridge (advanced)</button>
+  </footer>
+</div>
+<div class="toast" id="toast"></div>
+<script>
+"use strict";
+var $ = function (id) { return document.getElementById(id); };
+var BTN = { cross: "✕", circle: "○", square: "□", triangle: "△", l1: "L1", r1: "R1", l2: "L2", r2: "R2",
+  l3: "L3", r3: "R3", up: "↑", down: "↓", left: "←", right: "→", options: "OPTIONS", create: "CREATE",
+  ps: "PS", touchpad: "TOUCHPAD" };
+var cards = {}, pairedSig = "";
+/* Languages: the same eleven (including Hebrew), flags and picker as Elf Launcher and WK Autoloader.
+ * The choice is kept on the console (POST /api/lang, also used for its
+ * notifications) and in localStorage for the first paint. */
+var LANGS = [{"code": "en", "name": "English", "flag": "us"}, {"code": "ar", "name": "العربية", "flag": "sa", "rtl": true}, {"code": "es", "name": "Español", "flag": "es"}, {"code": "fr", "name": "Français", "flag": "fr"}, {"code": "de", "name": "Deutsch", "flag": "de"}, {"code": "pt", "name": "Português", "flag": "br"}, {"code": "ru", "name": "Русский", "flag": "ru"}, {"code": "ja", "name": "日本語", "flag": "jp"}, {"code": "zh", "name": "中文", "flag": "cn"}, {"code": "it", "name": "Italiano", "flag": "it"}, {"code": "he", "name": "עברית", "flag": "il", "rtl": true}];
+var FLAGS = {"us": "<svg viewBox=\"0 0 30 20\"><rect width=\"30\" height=\"20\" fill=\"#fff\"/><g fill=\"#b22234\"><rect width=\"30\" height=\"1.54\"/><rect y=\"3.08\" width=\"30\" height=\"1.54\"/><rect y=\"6.15\" width=\"30\" height=\"1.54\"/><rect y=\"9.23\" width=\"30\" height=\"1.54\"/><rect y=\"12.3\" width=\"30\" height=\"1.54\"/><rect y=\"15.4\" width=\"30\" height=\"1.54\"/><rect y=\"18.46\" width=\"30\" height=\"1.54\"/></g><rect width=\"13\" height=\"10.77\" fill=\"#3c3b6e\"/><g fill=\"#fff\"><circle cx=\"2.5\" cy=\"2.2\" r=\".7\"/><circle cx=\"6.5\" cy=\"2.2\" r=\".7\"/><circle cx=\"10.5\" cy=\"2.2\" r=\".7\"/><circle cx=\"4.5\" cy=\"5.4\" r=\".7\"/><circle cx=\"8.5\" cy=\"5.4\" r=\".7\"/><circle cx=\"2.5\" cy=\"8.6\" r=\".7\"/><circle cx=\"6.5\" cy=\"8.6\" r=\".7\"/><circle cx=\"10.5\" cy=\"8.6\" r=\".7\"/></g></svg>", "sa": "<svg viewBox=\"0 0 30 20\"><rect width=\"30\" height=\"20\" fill=\"#006c35\"/><path d=\"M8 8.5h14M9 10c2 .8 4 .8 6 0s4-.8 6 0\" stroke=\"#fff\" stroke-width=\"1.1\" fill=\"none\" stroke-linecap=\"round\"/><path d=\"M8 14h13l1.5-1\" stroke=\"#fff\" stroke-width=\"1\" fill=\"none\" stroke-linecap=\"round\"/></svg>", "es": "<svg viewBox=\"0 0 30 20\"><rect width=\"30\" height=\"20\" fill=\"#aa151b\"/><rect y=\"5\" width=\"30\" height=\"10\" fill=\"#f1bf00\"/></svg>", "fr": "<svg viewBox=\"0 0 30 20\"><rect width=\"10\" height=\"20\" fill=\"#0055a4\"/><rect x=\"10\" width=\"10\" height=\"20\" fill=\"#fff\"/><rect x=\"20\" width=\"10\" height=\"20\" fill=\"#ef4135\"/></svg>", "de": "<svg viewBox=\"0 0 30 20\"><rect width=\"30\" height=\"6.67\" fill=\"#000\"/><rect y=\"6.67\" width=\"30\" height=\"6.67\" fill=\"#dd0000\"/><rect y=\"13.33\" width=\"30\" height=\"6.67\" fill=\"#ffce00\"/></svg>", "br": "<svg viewBox=\"0 0 30 20\"><rect width=\"30\" height=\"20\" fill=\"#009c3b\"/><path d=\"M15 2.5L27 10 15 17.5 3 10z\" fill=\"#ffdf00\"/><circle cx=\"15\" cy=\"10\" r=\"4.2\" fill=\"#002776\"/><path d=\"M11 9.3c2.7-.6 5.6-.3 8 .9\" stroke=\"#fff\" stroke-width=\".7\" fill=\"none\"/></svg>", "ru": "<svg viewBox=\"0 0 30 20\"><rect width=\"30\" height=\"6.67\" fill=\"#fff\"/><rect y=\"6.67\" width=\"30\" height=\"6.67\" fill=\"#0039a6\"/><rect y=\"13.33\" width=\"30\" height=\"6.67\" fill=\"#d52b1e\"/></svg>", "jp": "<svg viewBox=\"0 0 30 20\"><rect width=\"30\" height=\"20\" fill=\"#fff\"/><circle cx=\"15\" cy=\"10\" r=\"6\" fill=\"#bc002d\"/></svg>", "cn": "<svg viewBox=\"0 0 30 20\"><rect width=\"30\" height=\"20\" fill=\"#de2910\"/><path d=\"M5 2.5l1.18 3.6H10l-3.1 2.2 1.2 3.6L5 9.7l-3.1 2.2 1.2-3.6L0 6.1h3.8z\" fill=\"#ffde00\"/><g fill=\"#ffde00\"><circle cx=\"11\" cy=\"2.5\" r=\".9\"/><circle cx=\"13\" cy=\"4.6\" r=\".9\"/><circle cx=\"13\" cy=\"7.6\" r=\".9\"/><circle cx=\"11\" cy=\"9.6\" r=\".9\"/></g></svg>", "it": "<svg viewBox=\"0 0 30 20\"><rect width=\"10\" height=\"20\" fill=\"#009246\"/><rect x=\"10\" width=\"10\" height=\"20\" fill=\"#fff\"/><rect x=\"20\" width=\"10\" height=\"20\" fill=\"#ce2b37\"/></svg>", "il": "<svg viewBox=\"0 0 30 20\"><rect width=\"30\" height=\"20\" fill=\"#fff\"/><rect y=\"2.2\" width=\"30\" height=\"2.4\" fill=\"#0038b8\"/><rect y=\"15.4\" width=\"30\" height=\"2.4\" fill=\"#0038b8\"/><path d=\"M15 6.2l1.35 4.15h4.35l-3.52 2.56 1.35 4.15L15 14.5l-3.53 2.56 1.35-4.15-3.52-2.56h4.35z\" fill=\"none\" stroke=\"#0038b8\" stroke-width=\"1\"/></svg>"};
+var I18N = {
+en:{"language":"Language","langSet":"Language: {name}","connecting":"Connecting…","status":"Status","bluetooth":"Bluetooth","connected":"Connected","paired":"Paired","tipUsers":"Play on your main user and press {ps} on a controller's card to give it the console's focus.","retryBt":"Retry Bluetooth","pairing":"Pairing","pairIdle":"Press the button, then put the controller in pairing mode. Keep the DualSense off while pairing.","pairBtn":"Pair a controller (60 s)","connectedTitle":"Connected controllers","upTo4":"Up to 4","pairedTitle":"Paired controllers","switchOn":"Switch one on to connect it","log":"Log","show":"Show","hide":"Hide","loading":"Loading…","refresh":"Refresh","footer":"Closing this page leaves PadBridge running. Stop it before loading the ELF again: controllers disconnect and Bluetooth is left as it was.","stopBtn":"Stop PadBridge (advanced)","pressPs":"Press PS","rumble":"Rumble","forget":"Forget","psTitle":"Same as holding PS: gives this controller the console's focus","rumbleTitle":"Rumbles this controller for half a second","psDone":"PS pressed on P{n}","rumbleDone":"Rumble sent to P{n}","noRumble":"This controller cannot rumble","sure":"Sure?","forgotten":"Forgotten - pair it again to use it","failed":"That did not work","battery":"Battery {n}%","charging":"charging","noBattery":"Battery not reported","noPads":"No controller connected. Switch on a paired one, or pair a new one.","nothingPaired":"Nothing paired yet.","offlinePad":"Paired controller · offline","unknownId":"unknown id","pairingNow":"Pairing…","running":"Running","noBt":"No Bluetooth","startingBt":"Starting Bluetooth…","ready":"Ready","failedBt":"Failed","starting":"Starting","rNochip":"The Bluetooth chip does not answer. Details are in the log ('diag' lines).","rLost":"The Bluetooth connection was lost. Press Retry Bluetooth.","rNovpad":"Virtual controllers cannot be created on this system (see the log). Bluetooth was not touched.","searching":"Searching… {n} s left. Put the controller in pairing mode now.","pairingSec":"Pairing… {n} s","hotkey":"Hotkey: {c}","pairStarted":"Pairing for 60 s - put the controller in pairing mode","retrying":"Retrying Bluetooth…","logError":"Could not read the log.","empty":"(empty)","tapStop":"Tap again to stop","stopping":"PadBridge is stopping","stoppingShort":"Stopping…","offline":"Offline"},
+ar:{"language":"اللغة","langSet":"اللغة: {name}","connecting":"جارٍ الاتصال…","status":"الحالة","bluetooth":"البلوتوث","connected":"متصلة","paired":"مقترنة","tipUsers":"العب بالمستخدم الرئيسي واضغط {ps} على بطاقة وحدة التحكم لمنحها التركيز على الجهاز.","retryBt":"إعادة محاولة البلوتوث","pairing":"الاقتران","pairIdle":"اضغط الزر، ثم ضع وحدة التحكم في وضع الاقتران. أبقِ DualSense مطفأة أثناء الاقتران.","pairBtn":"إقران وحدة تحكم (60 ث)","connectedTitle":"وحدات التحكم المتصلة","upTo4":"حتى 4","pairedTitle":"وحدات التحكم المقترنة","switchOn":"شغّل إحداها لتتصل","log":"السجل","show":"إظهار","hide":"إخفاء","loading":"جارٍ التحميل…","refresh":"تحديث","footer":"إغلاق هذه الصفحة يُبقي PadBridge قيد التشغيل. أوقفه قبل تحميل ملف ELF مرة أخرى: تنفصل وحدات التحكم ويبقى البلوتوث كما كان.","stopBtn":"إيقاف PadBridge (متقدم)","pressPs":"اضغط PS","rumble":"اهتزاز","forget":"إزالة","psTitle":"مثل الضغط مطولًا على PS: يمنح وحدة التحكم هذه التحكم في الجهاز","rumbleTitle":"يجعل وحدة التحكم هذه تهتز لنصف ثانية","psDone":"تم ضغط PS على P{n}","rumbleDone":"تم إرسال الاهتزاز إلى P{n}","noRumble":"وحدة التحكم هذه لا تدعم الاهتزاز","sure":"متأكد؟","forgotten":"تمت الإزالة - أقرنها مجددًا لاستخدامها","failed":"لم تنجح العملية","battery":"البطارية {n}%","charging":"قيد الشحن","noBattery":"لا تتوفر معلومات البطارية","noPads":"لا توجد وحدة تحكم متصلة. شغّل وحدة مقترنة أو أقرن وحدة جديدة.","nothingPaired":"لا توجد وحدات مقترنة بعد.","offlinePad":"وحدة تحكم مقترنة · غير متصلة","unknownId":"معرّف غير معروف","pairingNow":"جارٍ الاقتران…","running":"قيد التشغيل","noBt":"لا يوجد بلوتوث","startingBt":"جارٍ تشغيل البلوتوث…","ready":"جاهز","failedBt":"فشل","starting":"جارٍ البدء","rNochip":"شريحة البلوتوث لا تستجيب. التفاصيل في السجل (أسطر 'diag').","rLost":"انقطع اتصال البلوتوث. اضغط «إعادة محاولة البلوتوث».","rNovpad":"لا يمكن إنشاء وحدات تحكم افتراضية على هذا النظام (راجع السجل). لم يتم المساس بالبلوتوث.","searching":"جارٍ البحث… متبقٍ {n} ث. ضع وحدة التحكم في وضع الاقتران الآن.","pairingSec":"جارٍ الاقتران… {n} ث","hotkey":"اختصار: {c}","pairStarted":"الاقتران لمدة 60 ثانية - ضع وحدة التحكم في وضع الاقتران","retrying":"جارٍ إعادة محاولة البلوتوث…","logError":"تعذّرت قراءة السجل.","empty":"(فارغ)","tapStop":"اضغط مرة أخرى للإيقاف","stopping":"جارٍ إيقاف PadBridge","stoppingShort":"جارٍ الإيقاف…","offline":"غير متصل"},
+es:{"language":"Idioma","langSet":"Idioma: {name}","connecting":"Conectando…","status":"Estado","bluetooth":"Bluetooth","connected":"Conectados","paired":"Emparejados","tipUsers":"Juega con tu usuario principal y pulsa {ps} en la tarjeta del mando para darle el control de la consola.","retryBt":"Reintentar Bluetooth","pairing":"Emparejamiento","pairIdle":"Pulsa el botón y pon el mando en modo de emparejamiento. Mantén el DualSense apagado mientras tanto.","pairBtn":"Emparejar un mando (60 s)","connectedTitle":"Mandos conectados","upTo4":"Hasta 4","pairedTitle":"Mandos emparejados","switchOn":"Enciende uno para conectarlo","log":"Registro","show":"Mostrar","hide":"Ocultar","loading":"Cargando…","refresh":"Actualizar","footer":"Al cerrar esta página PadBridge sigue funcionando. Detenlo antes de volver a cargar el ELF: los mandos se desconectan y el Bluetooth queda como estaba.","stopBtn":"Detener PadBridge (avanzado)","pressPs":"Pulsar PS","rumble":"Vibrar","forget":"Olvidar","psTitle":"Igual que mantener PS: da el control de la consola a este mando","rumbleTitle":"Hace vibrar este mando medio segundo","psDone":"PS pulsado en P{n}","rumbleDone":"Vibración enviada a P{n}","noRumble":"Este mando no puede vibrar","sure":"¿Seguro?","forgotten":"Olvidado: vuelve a emparejarlo para usarlo","failed":"No ha funcionado","battery":"Batería {n}%","charging":"cargando","noBattery":"Batería no disponible","noPads":"Ningún mando conectado. Enciende uno emparejado o empareja uno nuevo.","nothingPaired":"Todavía no hay nada emparejado.","offlinePad":"Mando emparejado · desconectado","unknownId":"id desconocido","pairingNow":"Emparejando…","running":"En marcha","noBt":"Sin Bluetooth","startingBt":"Iniciando Bluetooth…","ready":"Listo","failedBt":"Error","starting":"Iniciando","rNochip":"El chip Bluetooth no responde. Los detalles están en el registro (líneas 'diag').","rLost":"Se perdió la conexión Bluetooth. Pulsa Reintentar Bluetooth.","rNovpad":"No se pueden crear mandos virtuales en este sistema (consulta el registro). No se ha tocado el Bluetooth.","searching":"Buscando… quedan {n} s. Pon el mando en modo de emparejamiento ahora.","pairingSec":"Emparejando… {n} s","hotkey":"Atajo: {c}","pairStarted":"Emparejando durante 60 s: pon el mando en modo de emparejamiento","retrying":"Reintentando Bluetooth…","logError":"No se pudo leer el registro.","empty":"(vacío)","tapStop":"Pulsa otra vez para detener","stopping":"PadBridge se está deteniendo","stoppingShort":"Deteniendo…","offline":"Sin conexión"},
+fr:{"language":"Langue","langSet":"Langue : {name}","connecting":"Connexion…","status":"État","bluetooth":"Bluetooth","connected":"Connectées","paired":"Associées","tipUsers":"Jouez avec votre utilisateur principal et appuyez sur {ps} sur la carte de la manette pour lui donner la main.","retryBt":"Réessayer le Bluetooth","pairing":"Association","pairIdle":"Appuyez sur le bouton, puis mettez la manette en mode association. Laissez la DualSense éteinte pendant l'association.","pairBtn":"Associer une manette (60 s)","connectedTitle":"Manettes connectées","upTo4":"Jusqu'à 4","pairedTitle":"Manettes associées","switchOn":"Allumez-en une pour la connecter","log":"Journal","show":"Afficher","hide":"Masquer","loading":"Chargement…","refresh":"Actualiser","footer":"Fermer cette page laisse PadBridge actif. Arrêtez-le avant de recharger l'ELF : les manettes se déconnectent et le Bluetooth reste tel qu'il était.","stopBtn":"Arrêter PadBridge (avancé)","pressPs":"Appuyer sur PS","rumble":"Vibration","forget":"Oublier","psTitle":"Comme maintenir PS : donne la main de la console à cette manette","rumbleTitle":"Fait vibrer cette manette une demi-seconde","psDone":"PS appuyé sur P{n}","rumbleDone":"Vibration envoyée à P{n}","noRumble":"Cette manette ne peut pas vibrer","sure":"Sûr ?","forgotten":"Oubliée - associez-la de nouveau pour l'utiliser","failed":"Cela n'a pas fonctionné","battery":"Batterie {n} %","charging":"en charge","noBattery":"Batterie non indiquée","noPads":"Aucune manette connectée. Allumez une manette associée ou associez-en une nouvelle.","nothingPaired":"Aucune manette associée pour l'instant.","offlinePad":"Manette associée · hors ligne","unknownId":"id inconnu","pairingNow":"Association…","running":"Actif","noBt":"Pas de Bluetooth","startingBt":"Démarrage du Bluetooth…","ready":"Prêt","failedBt":"Échec","starting":"Démarrage","rNochip":"La puce Bluetooth ne répond pas. Les détails sont dans le journal (lignes « diag »).","rLost":"La connexion Bluetooth a été perdue. Appuyez sur Réessayer le Bluetooth.","rNovpad":"Impossible de créer des manettes virtuelles sur ce système (voir le journal). Le Bluetooth n'a pas été modifié.","searching":"Recherche… encore {n} s. Mettez la manette en mode association maintenant.","pairingSec":"Association… {n} s","hotkey":"Raccourci : {c}","pairStarted":"Association pendant 60 s - mettez la manette en mode association","retrying":"Nouvel essai du Bluetooth…","logError":"Impossible de lire le journal.","empty":"(vide)","tapStop":"Appuyez encore pour arrêter","stopping":"PadBridge s'arrête","stoppingShort":"Arrêt…","offline":"Hors ligne"},
+de:{"language":"Sprache","langSet":"Sprache: {name}","connecting":"Verbindung…","status":"Status","bluetooth":"Bluetooth","connected":"Verbunden","paired":"Gekoppelt","tipUsers":"Spiele mit deinem Hauptbenutzer und drücke {ps} auf der Controller-Karte, um ihm den Fokus der Konsole zu geben.","retryBt":"Bluetooth erneut versuchen","pairing":"Kopplung","pairIdle":"Drücke die Taste und versetze den Controller dann in den Kopplungsmodus. Lass den DualSense dabei ausgeschaltet.","pairBtn":"Controller koppeln (60 s)","connectedTitle":"Verbundene Controller","upTo4":"Bis zu 4","pairedTitle":"Gekoppelte Controller","switchOn":"Schalte einen ein, um ihn zu verbinden","log":"Protokoll","show":"Anzeigen","hide":"Ausblenden","loading":"Wird geladen…","refresh":"Aktualisieren","footer":"Wenn du diese Seite schließt, läuft PadBridge weiter. Beende es, bevor du die ELF erneut lädst: Die Controller werden getrennt und Bluetooth bleibt, wie es war.","stopBtn":"PadBridge beenden (erweitert)","pressPs":"PS drücken","rumble":"Vibration","forget":"Entfernen","psTitle":"Wie PS gedrückt halten: gibt diesem Controller den Fokus der Konsole","rumbleTitle":"Lässt diesen Controller eine halbe Sekunde vibrieren","psDone":"PS auf P{n} gedrückt","rumbleDone":"Vibration an P{n} gesendet","noRumble":"Dieser Controller kann nicht vibrieren","sure":"Sicher?","forgotten":"Entfernt - zum Verwenden erneut koppeln","failed":"Das hat nicht funktioniert","battery":"Akku {n} %","charging":"lädt","noBattery":"Akkustand nicht gemeldet","noPads":"Kein Controller verbunden. Schalte einen gekoppelten ein oder kopple einen neuen.","nothingPaired":"Noch nichts gekoppelt.","offlinePad":"Gekoppelter Controller · offline","unknownId":"unbekannte ID","pairingNow":"Kopplung…","running":"Läuft","noBt":"Kein Bluetooth","startingBt":"Bluetooth wird gestartet…","ready":"Bereit","failedBt":"Fehler","starting":"Startet","rNochip":"Der Bluetooth-Chip antwortet nicht. Details im Protokoll (Zeilen mit „diag“).","rLost":"Die Bluetooth-Verbindung wurde unterbrochen. Drücke „Bluetooth erneut versuchen“.","rNovpad":"Auf diesem System können keine virtuellen Controller erstellt werden (siehe Protokoll). Bluetooth wurde nicht verändert.","searching":"Suche… noch {n} s. Versetze den Controller jetzt in den Kopplungsmodus.","pairingSec":"Kopplung… {n} s","hotkey":"Tastenkombination: {c}","pairStarted":"Kopplung für 60 s - Controller in den Kopplungsmodus versetzen","retrying":"Bluetooth wird erneut versucht…","logError":"Das Protokoll konnte nicht gelesen werden.","empty":"(leer)","tapStop":"Zum Beenden erneut drücken","stopping":"PadBridge wird beendet","stoppingShort":"Wird beendet…","offline":"Offline"},
+pt:{"language":"Idioma","langSet":"Idioma: {name}","connecting":"Conectando…","status":"Status","bluetooth":"Bluetooth","connected":"Conectados","paired":"Pareados","tipUsers":"Jogue com seu usuário principal e pressione {ps} no cartão do controle para dar a ele o foco do console.","retryBt":"Tentar Bluetooth novamente","pairing":"Pareamento","pairIdle":"Pressione o botão e coloque o controle no modo de pareamento. Mantenha o DualSense desligado durante o pareamento.","pairBtn":"Parear um controle (60 s)","connectedTitle":"Controles conectados","upTo4":"Até 4","pairedTitle":"Controles pareados","switchOn":"Ligue um para conectá-lo","log":"Log","show":"Mostrar","hide":"Ocultar","loading":"Carregando…","refresh":"Atualizar","footer":"Fechar esta página mantém o PadBridge em execução. Pare-o antes de carregar o ELF novamente: os controles são desconectados e o Bluetooth fica como estava.","stopBtn":"Parar PadBridge (avançado)","pressPs":"Pressionar PS","rumble":"Vibrar","forget":"Esquecer","psTitle":"Igual a segurar PS: dá o foco do console a este controle","rumbleTitle":"Faz este controle vibrar por meio segundo","psDone":"PS pressionado em P{n}","rumbleDone":"Vibração enviada para P{n}","noRumble":"Este controle não pode vibrar","sure":"Certeza?","forgotten":"Esquecido - pareie novamente para usar","failed":"Não funcionou","battery":"Bateria {n}%","charging":"carregando","noBattery":"Bateria não informada","noPads":"Nenhum controle conectado. Ligue um pareado ou pareie um novo.","nothingPaired":"Nada pareado ainda.","offlinePad":"Controle pareado · offline","unknownId":"id desconhecido","pairingNow":"Pareando…","running":"Em execução","noBt":"Sem Bluetooth","startingBt":"Iniciando o Bluetooth…","ready":"Pronto","failedBt":"Falhou","starting":"Iniciando","rNochip":"O chip Bluetooth não responde. Os detalhes estão no log (linhas 'diag').","rLost":"A conexão Bluetooth foi perdida. Pressione Tentar Bluetooth novamente.","rNovpad":"Não é possível criar controles virtuais neste sistema (veja o log). O Bluetooth não foi alterado.","searching":"Procurando… faltam {n} s. Coloque o controle no modo de pareamento agora.","pairingSec":"Pareando… {n} s","hotkey":"Atalho: {c}","pairStarted":"Pareando por 60 s - coloque o controle no modo de pareamento","retrying":"Tentando o Bluetooth novamente…","logError":"Não foi possível ler o log.","empty":"(vazio)","tapStop":"Toque de novo para parar","stopping":"O PadBridge está parando","stoppingShort":"Parando…","offline":"Offline"},
+ru:{"language":"Язык","langSet":"Язык: {name}","connecting":"Подключение…","status":"Состояние","bluetooth":"Bluetooth","connected":"Подключено","paired":"Сопряжено","tipUsers":"Играйте под основным пользователем и нажмите {ps} на карточке геймпада, чтобы передать ему управление.","retryBt":"Повторить Bluetooth","pairing":"Сопряжение","pairIdle":"Нажмите кнопку, затем переведите геймпад в режим сопряжения. Во время сопряжения держите DualSense выключенным.","pairBtn":"Сопрячь геймпад (60 с)","connectedTitle":"Подключённые геймпады","upTo4":"До 4","pairedTitle":"Сопряжённые геймпады","switchOn":"Включите один, чтобы подключить","log":"Журнал","show":"Показать","hide":"Скрыть","loading":"Загрузка…","refresh":"Обновить","footer":"Если закрыть эту страницу, PadBridge продолжит работать. Остановите его перед повторной загрузкой ELF: геймпады отключатся, а Bluetooth останется в прежнем состоянии.","stopBtn":"Остановить PadBridge (для опытных)","pressPs":"Нажать PS","rumble":"Вибрация","forget":"Забыть","psTitle":"Как удержание PS: передаёт этому геймпаду управление консолью","rumbleTitle":"Включает вибрацию этого геймпада на полсекунды","psDone":"PS нажата на P{n}","rumbleDone":"Вибрация отправлена на P{n}","noRumble":"Этот геймпад не поддерживает вибрацию","sure":"Точно?","forgotten":"Забыт - выполните сопряжение снова, чтобы использовать","failed":"Не получилось","battery":"Батарея {n}%","charging":"заряжается","noBattery":"Заряд не сообщается","noPads":"Нет подключённых геймпадов. Включите сопряжённый или выполните сопряжение нового.","nothingPaired":"Пока ничего не сопряжено.","offlinePad":"Сопряжённый геймпад · не в сети","unknownId":"неизвестный id","pairingNow":"Сопряжение…","running":"Работает","noBt":"Нет Bluetooth","startingBt":"Запуск Bluetooth…","ready":"Готов","failedBt":"Ошибка","starting":"Запуск","rNochip":"Чип Bluetooth не отвечает. Подробности в журнале (строки «diag»).","rLost":"Связь Bluetooth потеряна. Нажмите «Повторить Bluetooth».","rNovpad":"На этой системе нельзя создать виртуальные геймпады (см. журнал). Bluetooth не затронут.","searching":"Поиск… осталось {n} с. Переведите геймпад в режим сопряжения.","pairingSec":"Сопряжение… {n} с","hotkey":"Сочетание: {c}","pairStarted":"Сопряжение 60 с - переведите геймпад в режим сопряжения","retrying":"Повторная попытка Bluetooth…","logError":"Не удалось прочитать журнал.","empty":"(пусто)","tapStop":"Нажмите ещё раз для остановки","stopping":"PadBridge останавливается","stoppingShort":"Остановка…","offline":"Нет связи"},
+ja:{"language":"言語","langSet":"言語: {name}","connecting":"接続しています…","status":"ステータス","bluetooth":"Bluetooth","connected":"接続中","paired":"ペアリング済み","tipUsers":"メインユーザーでプレイし、コントローラーのカードで {ps} を押すと操作が切り替わります。","retryBt":"Bluetooth を再試行","pairing":"ペアリング","pairIdle":"ボタンを押してから、コントローラーをペアリングモードにしてください。ペアリング中は DualSense の電源を切っておいてください。","pairBtn":"ペアリング開始（60 秒）","connectedTitle":"接続中のコントローラー","upTo4":"最大 4 台","pairedTitle":"ペアリング済みのコントローラー","switchOn":"電源を入れると接続されます","log":"ログ","show":"表示","hide":"隠す","loading":"読み込み中…","refresh":"更新","footer":"このページを閉じても PadBridge は動作し続けます。ELF を再度読み込む前に停止してください。コントローラーは切断され、Bluetooth は元の状態のままになります。","stopBtn":"PadBridge を停止（上級者向け）","pressPs":"PS を押す","rumble":"振動","forget":"登録解除","psTitle":"PS ボタンの長押しと同じ: このコントローラーに操作を切り替えます","rumbleTitle":"このコントローラーを 0.5 秒振動させます","psDone":"P{n} で PS を押しました","rumbleDone":"P{n} に振動を送信しました","noRumble":"このコントローラーは振動できません","sure":"本当に？","forgotten":"登録を解除しました - 使うには再度ペアリングしてください","failed":"うまくいきませんでした","battery":"バッテリー {n}%","charging":"充電中","noBattery":"バッテリー情報なし","noPads":"接続中のコントローラーはありません。ペアリング済みのものの電源を入れるか、新しくペアリングしてください。","nothingPaired":"まだペアリングされていません。","offlinePad":"ペアリング済み · オフライン","unknownId":"不明な ID","pairingNow":"ペアリング中…","running":"実行中","noBt":"Bluetooth なし","startingBt":"Bluetooth を起動中…","ready":"準備完了","failedBt":"失敗","starting":"起動中","rNochip":"Bluetooth チップが応答しません。詳細はログ（「diag」の行）を確認してください。","rLost":"Bluetooth の接続が切れました。「Bluetooth を再試行」を押してください。","rNovpad":"このシステムでは仮想コントローラーを作成できません（ログを確認してください）。Bluetooth は変更していません。","searching":"検索中… 残り {n} 秒。今すぐコントローラーをペアリングモードにしてください。","pairingSec":"ペアリング中… {n} 秒","hotkey":"ショートカット: {c}","pairStarted":"60 秒間ペアリング中 - コントローラーをペアリングモードにしてください","retrying":"Bluetooth を再試行しています…","logError":"ログを読み込めませんでした。","empty":"（空）","tapStop":"もう一度押すと停止します","stopping":"PadBridge を停止しています","stoppingShort":"停止中…","offline":"オフライン"},
+zh:{"language":"语言","langSet":"语言：{name}","connecting":"正在连接…","status":"状态","bluetooth":"蓝牙","connected":"已连接","paired":"已配对","tipUsers":"用主用户游玩，并在手柄卡片上按 {ps} 即可让该手柄获得主机焦点。","retryBt":"重试蓝牙","pairing":"配对","pairIdle":"按下按钮，然后让手柄进入配对模式。配对期间请保持 DualSense 关闭。","pairBtn":"配对手柄（60 秒）","connectedTitle":"已连接的手柄","upTo4":"最多 4 个","pairedTitle":"已配对的手柄","switchOn":"打开手柄即可连接","log":"日志","show":"显示","hide":"隐藏","loading":"正在加载…","refresh":"刷新","footer":"关闭此页面后 PadBridge 会继续运行。再次加载 ELF 前请先停止它：手柄会断开，蓝牙会保持原样。","stopBtn":"停止 PadBridge（高级）","pressPs":"按 PS","rumble":"振动","forget":"取消配对","psTitle":"等同于按住 PS：让此手柄获得主机的控制权","rumbleTitle":"让此手柄振动半秒","psDone":"已在 P{n} 上按下 PS","rumbleDone":"已向 P{n} 发送振动","noRumble":"此手柄不支持振动","sure":"确定吗？","forgotten":"已取消配对 - 需重新配对才能使用","failed":"操作失败","battery":"电量 {n}%","charging":"充电中","noBattery":"未报告电量","noPads":"没有已连接的手柄。请打开已配对的手柄，或配对新手柄。","nothingPaired":"尚未配对任何手柄。","offlinePad":"已配对的手柄 · 离线","unknownId":"未知 ID","pairingNow":"正在配对…","running":"运行中","noBt":"无蓝牙","startingBt":"正在启动蓝牙…","ready":"就绪","failedBt":"失败","starting":"正在启动","rNochip":"蓝牙芯片无响应。详情见日志（“diag”行）。","rLost":"蓝牙连接已丢失。请按“重试蓝牙”。","rNovpad":"此系统无法创建虚拟手柄（请查看日志）。未改动蓝牙。","searching":"正在搜索… 剩余 {n} 秒。请立即让手柄进入配对模式。","pairingSec":"正在配对… {n} 秒","hotkey":"快捷键：{c}","pairStarted":"配对 60 秒 - 请让手柄进入配对模式","retrying":"正在重试蓝牙…","logError":"无法读取日志。","empty":"（空）","tapStop":"再按一次以停止","stopping":"PadBridge 正在停止","stoppingShort":"正在停止…","offline":"离线"},
+it:{"language":"Lingua","langSet":"Lingua: {name}","connecting":"Connessione…","status":"Stato","bluetooth":"Bluetooth","connected":"Connessi","paired":"Associati","tipUsers":"Gioca con il tuo utente principale e premi {ps} sulla scheda del controller per dargli il focus della console.","retryBt":"Riprova Bluetooth","pairing":"Associazione","pairIdle":"Premi il pulsante, poi metti il controller in modalità di associazione. Tieni spento il DualSense durante l'associazione.","pairBtn":"Associa un controller (60 s)","connectedTitle":"Controller connessi","upTo4":"Fino a 4","pairedTitle":"Controller associati","switchOn":"Accendine uno per connetterlo","log":"Registro","show":"Mostra","hide":"Nascondi","loading":"Caricamento…","refresh":"Aggiorna","footer":"Chiudendo questa pagina PadBridge resta attivo. Arrestalo prima di caricare di nuovo l'ELF: i controller si disconnettono e il Bluetooth resta com'era.","stopBtn":"Arresta PadBridge (avanzato)","pressPs":"Premi PS","rumble":"Vibrazione","forget":"Dimentica","psTitle":"Come tenere premuto PS: dà a questo controller il controllo della console","rumbleTitle":"Fa vibrare questo controller per mezzo secondo","psDone":"PS premuto su P{n}","rumbleDone":"Vibrazione inviata a P{n}","noRumble":"Questo controller non può vibrare","sure":"Sicuro?","forgotten":"Dimenticato - associalo di nuovo per usarlo","failed":"Non ha funzionato","battery":"Batteria {n}%","charging":"in carica","noBattery":"Batteria non indicata","noPads":"Nessun controller connesso. Accendine uno associato o associane uno nuovo.","nothingPaired":"Ancora nessun controller associato.","offlinePad":"Controller associato · offline","unknownId":"id sconosciuto","pairingNow":"Associazione…","running":"In esecuzione","noBt":"Nessun Bluetooth","startingBt":"Avvio del Bluetooth…","ready":"Pronto","failedBt":"Errore","starting":"Avvio","rNochip":"Il chip Bluetooth non risponde. I dettagli sono nel registro (righe 'diag').","rLost":"La connessione Bluetooth è stata persa. Premi Riprova Bluetooth.","rNovpad":"Su questo sistema non è possibile creare controller virtuali (vedi il registro). Il Bluetooth non è stato toccato.","searching":"Ricerca… mancano {n} s. Metti ora il controller in modalità di associazione.","pairingSec":"Associazione… {n} s","hotkey":"Scorciatoia: {c}","pairStarted":"Associazione per 60 s - metti il controller in modalità di associazione","retrying":"Nuovo tentativo Bluetooth…","logError":"Impossibile leggere il registro.","empty":"(vuoto)","tapStop":"Tocca di nuovo per arrestare","stopping":"PadBridge si sta arrestando","stoppingShort":"Arresto…","offline":"Offline"},
+he:{"language":"שפה","langSet":"שפה: {name}","connecting":"מתחבר…","status":"סטטוס","bluetooth":"בלוטות׳","connected":"מחוברים","paired":"מצומדים","tipUsers":"שחק עם המשתמש הראשי ולחץ {ps} בכרטיס הבקר כדי להעביר אליו את המיקוד בקונסולה.","retryBt":"נסה שוב בלוטות׳","pairing":"צימוד","pairIdle":"לחץ על הכפתור, ואז העבר את הבקר למצב צימוד. השאר את הדואלסנס כבוי בזמן הצימוד.","pairBtn":"צימוד בקר (60 שנ׳)","connectedTitle":"בקרים מחוברים","upTo4":"עד 4","pairedTitle":"בקרים מצומדים","switchOn":"הדלק אחד כדי לחבר אותו","log":"יומן","show":"הצג","hide":"הסתר","loading":"טוען…","refresh":"רענון","footer":"סגירת העמוד משאירה את PadBridge רץ. עצור אותו לפני טעינת ה-ELF שוב: הבקרים מתנתקים והבלוטות׳ נשאר כמו שהיה.","stopBtn":"עצור את PadBridge (מתקדם)","pressPs":"לחץ PS","rumble":"רטט","forget":"שכח","psTitle":"כמו לחיצה ארוכה על PS: מעביר לבקר הזה את השליטה בקונסולה","rumbleTitle":"מרטיט את הבקר הזה לחצי שנייה","psDone":"PS נלחץ ב-P{n}","rumbleDone":"רטט נשלח ל-P{n}","noRumble":"לבקר הזה אין רטט","sure":"בטוח?","forgotten":"נשכח - צמד שוב כדי להשתמש","failed":"זה לא הצליח","battery":"סוללה {n}%","charging":"בטעינה","noBattery":"אין דיווח על סוללה","noPads":"אין בקר מחובר. הדלק בקר מצומד, או צמד בקר חדש.","nothingPaired":"עדיין אין כלום מצומד.","offlinePad":"בקר מצומד · לא מחובר","unknownId":"מזהה לא ידוע","pairingNow":"מצמד…","running":"רץ","noBt":"אין בלוטות׳","startingBt":"מפעיל בלוטות׳…","ready":"מוכן","failedBt":"נכשל","starting":"מתחיל","rNochip":"שבב הבלוטות׳ לא עונה. הפרטים ביומן (שורות 'diag').","rLost":"חיבור הבלוטות׳ נקטע. לחץ «נסה שוב בלוטות׳».","rNovpad":"לא ניתן ליצור בקרי משחק וירטואליים במערכת הזו (ראה יומן). הבלוטות׳ לא נגע.","searching":"מחפש… נשארו {n} שנ׳. העבר את הבקר למצב צימוד עכשיו.","pairingSec":"מצמד… {n} שנ׳","hotkey":"קיצור: {c}","pairStarted":"צימוד ל-60 שנ׳ - העבר את הבקר למצב צימוד","retrying":"מנסה שוב בלוטות׳…","logError":"לא ניתן לקרוא את היומן.","empty":"(ריק)","tapStop":"לחץ שוב כדי לעצור","stopping":"PadBridge נעצר","stoppingShort":"עוצר…","offline":"לא מחובר"}
+};
+var LS_LANG = "padbridge-lang", LANG = "en", langFromConsole = false, lastState = null;
+try { var saved = localStorage.getItem(LS_LANG); if (I18N[saved]) LANG = saved; } catch (e) {}
+function t(k, v) {
+  var s = (I18N[LANG] || I18N.en)[k];
+  if (s == null) s = I18N.en[k];
+  if (s == null) s = k;
+  return v ? s.replace(/\{(\w+)\}/g, function (m, x) { return v[x] != null ? String(v[x]) : m; }) : s;
+}
+function langInfo(c) { for (var i = 0; i < LANGS.length; i++) if (LANGS[i].code === c) return LANGS[i]; return LANGS[0]; }
+function esc(s) { return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;"); }
+function renderLangList() {
+  var box = $("langlist"), html = "";
+  LANGS.forEach(function (L) {
+    html += '<button type="button" class="langopt" role="menuitem" data-lang="' + L.code + '" data-state="' + (L.code === LANG ? "on" : "off") + '"'
+      + (L.rtl ? ' dir="rtl"' : "") + '><span class="flag">' + (FLAGS[L.flag] || "") + "</span><span>" + esc(L.name) + "</span></button>";
+  });
+  box.innerHTML = html;
+  Array.prototype.forEach.call(box.querySelectorAll(".langopt"), function (b) {
+    b.onclick = function (ev) { ev.stopPropagation(); toggleLangList(false); setLang(b.getAttribute("data-lang"), true); };
+  });
+}
+function toggleLangList(force) {
+  var box = $("langlist"), on = force === true || force === false ? force : box.getAttribute("data-state") !== "open";
+  box.setAttribute("data-state", on ? "open" : "closed");
+  box.className = on ? "show" : "";
+}
+function applyLang() {
+  var info = langInfo(LANG), root = document.documentElement;
+  root.setAttribute("lang", LANG);
+  if (info.rtl) root.setAttribute("dir", "rtl"); else root.removeAttribute("dir");
+  Array.prototype.forEach.call(document.querySelectorAll("[data-i18n]"), function (n) { n.textContent = t(n.getAttribute("data-i18n")); });
+  $("langflag").innerHTML = FLAGS[info.flag] || "";
+  renderLangList();
+  /* the dynamic parts are drawn again in the new language */
+  Object.keys(cards).forEach(function (k) { if (cards[k].root.parentNode) cards[k].root.parentNode.removeChild(cards[k].root); });
+  cards = {}; pairedSig = "";
+  var empty = $("cards").querySelector(".empty");
+  if (empty) empty.parentNode.removeChild(empty);
+  render(lastState);
+  if ($("logBox").open) loadLog();
+}
+function setLang(code, save) {
+  if (!I18N[code]) code = "en";
+  LANG = code;
+  try { localStorage.setItem(LS_LANG, code); } catch (e) {}
+  applyLang();
+  if (save) api("POST", "/api/lang?code=" + code).then(function () { toast(t("langSet", { name: langInfo(code).name })); },
+    function () { toast(t("failed")); });
+}
+
+function api(method, path) {
+  return fetch(path, { method: method, headers: { "X-PadBridge": "1" }, cache: "no-store" }).then(function (r) {
+    if (!r.ok) throw new Error("http " + r.status);
+    return path === "/api/log" ? r.text() : r.json();
+  });
+}
+function el(tag, cls, text) {
+  var e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text !== undefined) e.textContent = text;
+  return e;
+}
+function toast(msg) {
+  var t = $("toast");
+  t.textContent = msg;
+  t.className = "toast show";
+  clearTimeout(toast.timer);
+  toast.timer = setTimeout(function () { t.className = "toast"; }, 2200);
+}
+/* A destructive button asks once more on the page itself (no browser dialog). */
+function armed(btn, labelKey, run) {
+  var idle = btn.textContent;
+  btn.onclick = function () {
+    if (btn.dataset.armed) { delete btn.dataset.armed; btn.classList.remove("armed"); btn.textContent = idle; run(); return; }
+    idle = btn.textContent;
+    btn.dataset.armed = "1"; btn.classList.add("armed"); btn.textContent = t(labelKey);
+    setTimeout(function () { if (btn.dataset.armed) { delete btn.dataset.armed; btn.classList.remove("armed"); btn.textContent = idle; } }, 4000);
+  };
+}
+function act(path, ok, bad) {
+  return api("POST", path).then(function () { if (ok) toast(ok); }, function () { toast(bad || t("failed")); })
+    .then(refresh);
+}
+
+/* Controller drawings: original SVGs, one per controller family, each with its own labels. */
+var SVGNS = "http://www.w3.org/2000/svg";
+function sv(tag, a, parent) { var e = document.createElementNS(SVGNS, tag); for (var k in a) e.setAttribute(k, a[k]); if (parent) parent.appendChild(e); return e; }
+var BODY = {
+  xbox: "M70 34 Q160 22 250 34 Q292 40 304 92 L318 160 Q322 196 290 192 Q270 190 252 164 L232 140 H88 L68 164 Q50 190 30 192 Q-2 196 2 160 L16 92 Q28 40 70 34 Z",
+  ps: "M64 36 H256 Q290 36 300 74 L318 164 Q322 198 292 194 Q270 190 254 160 L238 134 H82 L66 160 Q50 190 28 194 Q-2 198 2 164 L20 74 Q30 36 64 36 Z",
+  ds5: "M70 34 Q160 26 250 34 Q294 40 304 84 L320 166 Q322 198 292 194 Q268 190 252 158 L236 136 H84 L68 158 Q52 190 28 194 Q-2 198 0 166 L16 84 Q26 40 70 34 Z",
+  nin: "M58 38 Q160 26 262 38 Q300 46 308 96 L316 156 Q318 192 290 190 Q268 188 254 166 L236 142 H84 L66 166 Q52 188 30 190 Q2 192 4 156 L12 96 Q20 46 58 38 Z",
+  retro: "M66 46 H254 A64 64 0 0 1 254 174 H66 A64 64 0 0 1 66 46 Z",
+  md: "M24 66 Q160 26 296 66 Q326 150 276 176 Q160 146 44 176 Q-6 150 24 66 Z",
+  n64: "M34 44 H286 Q314 44 308 90 L292 150 Q280 180 262 152 L238 118 H200 L182 196 H138 L120 118 H82 L58 152 Q40 180 28 150 L12 90 Q6 44 34 44 Z",
+  adapt: "M10 38 H310 Q318 38 318 48 V172 Q318 182 308 182 H12 Q2 182 2 172 V48 Q2 38 10 38 Z",
+  gen: "M60 40 H260 Q296 40 304 80 L316 160 Q318 194 290 192 Q270 190 256 164 L240 138 H80 L64 164 Q50 190 30 192 Q2 194 4 160 L16 80 Q24 40 60 40 Z"
+};
+var XF = { triangle: ["Y", "#f5c518"], circle: ["B", "#e8413c"], cross: ["A", "#3ddc5a"], square: ["X", "#3f8cff"] },
+    PF = { triangle: ["△", "#3ddcb0"], circle: ["○", "#ff4d6d"], cross: ["✕", "#7fa8ff"], square: ["□", "#ff7ad9"] },
+    NF = { triangle: ["X", ""], circle: ["A", ""], cross: ["B", ""], square: ["Y", ""] },
+    SF = { triangle: ["X", "#8f7ad8"], circle: ["A", "#c94a5a"], cross: ["B", "#d8a23a"], square: ["Y", "#3d9a5a"] },
+    GF = { triangle: ["Y", ""], circle: ["B", ""], cross: ["A", ""], square: ["X", ""] };
+var XMID = [["create", "View", 138, 92, "r"], ["options", "Menu", 182, 92, "r"], ["ps", "Xbox", 160, 62, "g"]];
+var NMID = [["create", "−", 138, 72, "s"], ["options", "+", 182, 72, "s"], ["touchpad", "◉", 140, 104, "s"], ["ps", "⌂", 180, 104, "s"]];
+var PMID = [["touchpad", "", 160, 74, "t"], ["create", "Share", 100, 50, "r"], ["options", "Options", 220, 50, "r"], ["ps", "PS", 160, 120, "g"]];
+var AMID = [["create", "Back", 138, 92, "r"], ["options", "Start", 182, 92, "r"], ["ps", "Home", 160, 62, "g"]];
+var OFF = { ls: [92, 92], rs: [200, 140], dp: [122, 140], fc: [232, 92] }, SYM = { ls: [120, 142], rs: [200, 142], dp: [84, 92], fc: [236, 92] };
+function mk(base, o) { var r = {}, k; for (k in base) r[k] = base[k]; for (k in o) r[k] = o[k]; return r; }
+var XB = mk(OFF, { body: "xbox", acc: "#3ddc5a", sh: ["LB", "LT", "RB", "RT"], face: XF, mid: XMID });
+var PS = mk(SYM, { body: "ps", acc: "#4d8bff", sh: ["L1", "L2", "R1", "R2"], face: PF, mid: PMID });
+var NN = mk(OFF, { body: "nin", acc: "#ff3d5a", sh: ["L", "ZL", "R", "ZR"], face: NF, mid: NMID });
+var AN = mk(OFF, { body: "gen", acc: "#c8ff3d", sh: ["L1", "L2", "R1", "R2"], face: GF, mid: AMID });
+var DRAW = {
+  xboxone: mk(XB, { name: "Xbox One" }),
+  xboxseries: mk(XB, { name: "Xbox Series X|S", mid: XMID.concat([["touchpad", "Share", 160, 126, "s"]]) }),
+  xboxelite: mk(XB, { name: "Xbox Elite Series 2", acc: "#b8c2cc", deco: "paddles4" }),
+  xboxadapt: mk(XB, { name: "Xbox Adaptive", body: "adapt", ls: null, rs: null, dp: [64, 120], fc: null, adapt: 1,
+    mid: [["create", "View", 120, 64, "r"], ["options", "Menu", 168, 64, "r"], ["ps", "Xbox", 270, 64, "g"]] }),
+  ds4: mk(PS, { name: "DualShock 4", deco: "lightbar" }),
+  ps3p: mk(PS, { name: "PS-layout pad", acc: "#7fa8ff", deco: "paddles4" }),
+  ds5: mk(PS, { name: "DualSense", body: "ds5", mid: [["touchpad", "", 160, 74, "t"], ["create", "Create", 100, 50, "r"], ["options", "Options", 220, 50, "r"], ["ps", "PS", 160, 120, "g"]], deco: "mic" }),
+  ds5edge: mk(PS, { name: "DualSense Edge", body: "ds5", acc: "#e8eef8", mid: [["touchpad", "", 160, 74, "t"], ["create", "Create", 100, 50, "r"], ["options", "Options", 220, 50, "r"], ["ps", "PS", 160, 120, "g"]], deco: "fn" }),
+  switchpro: mk(NN, { name: "Switch Pro" }),
+  snes: mk(NN, { name: "SNES", body: "retro", acc: "#8f7ad8", sh: ["L", "", "R", ""], ls: null, rs: null, dp: [80, 110], fc: [240, 110], face: SF,
+    mid: [["create", "SELECT", 140, 118, "r"], ["options", "START", 180, 118, "r"], ["ps", "⌂", 160, 72, "s"]], notrig: 1 }),
+  n64: mk(NN, { name: "N64", body: "n64", acc: "#3f8cff", sh: ["L", "Z", "R", "ZR"], ls: [160, 150], rs: null, dp: [64, 84], fc: null, n64: 1,
+    mid: [["options", "START", 160, 84, "s"], ["ps", "⌂", 140, 62, "s"], ["touchpad", "◉", 180, 62, "s"]] }),
+  md: mk(NN, { name: "Mega Drive", body: "md", acc: "#e8413c", sh: ["L", "ZL", "R", "ZR"], ls: null, rs: null, dp: [80, 110], fc: null, md: 1, notrig: 1,
+    mid: [["options", "START", 160, 82, "r"], ["create", "−", 140, 112, "s"], ["ps", "⌂", 180, 112, "s"]] }),
+  sn30: mk(NN, { name: "8BitDo SN30/SF30 Pro", body: "retro", acc: "#8f7ad8", ls: [128, 150], rs: [192, 150], dp: [70, 100], fc: [250, 100], face: SF,
+    mid: [["create", "SELECT", 136, 90, "r"], ["options", "START", 184, 90, "r"], ["ps", "⌂", 160, 120, "s"], ["touchpad", "★", 160, 62, "s"]] }),
+  pro2: mk(NN, { name: "8BitDo Pro 2/3", body: "retro", acc: "#ff6a2b", ls: [128, 150], rs: [192, 150], dp: [70, 100], fc: [250, 100], deco: "paddles2",
+    mid: [["create", "−", 140, 90, "s"], ["options", "+", 180, 90, "s"], ["ps", "⌂", 160, 116, "s"], ["touchpad", "★", 160, 64, "s"]] }),
+  ultimate: mk(NN, { name: "8BitDo Ultimate", acc: "#ff6a2b", deco: "paddles2" }),
+  gamesir: mk(XB, { name: "GameSir", acc: "#ff3d7f", mid: [["create", "View", 138, 92, "r"], ["options", "Menu", 182, 92, "r"], ["ps", "G", 160, 62, "g"], ["touchpad", "◉", 160, 120, "s"]] }),
+  android: mk(AN, { name: "Android / BT pad" }),
+  shield: mk(AN, { name: "NVIDIA Shield", acc: "#76b900", mid: [["create", "◁", 138, 92, "s"], ["options", "▷", 182, 92, "s"], ["ps", "⬢", 160, 62, "g"]] }),
+  atari: mk(AN, { name: "Atari VCS", acc: "#e8413c", mid: [["create", "Back", 138, 92, "r"], ["options", "Menu", 182, 92, "r"], ["ps", "Fuji", 160, 62, "g"]] }),
+  gen: mk(SYM, { name: "Generic", body: "gen", acc: "#c8ff3d", sh: ["L1", "L2", "R1", "R2"], face: { triangle: ["4", ""], circle: ["2", ""], cross: ["1", ""], square: ["3", ""] },
+    mid: [["create", "Sel", 128, 80, "r"], ["options", "Start", 192, 80, "r"], ["ps", "Home", 160, 112, "g"], ["touchpad", "Pad", 160, 56, "s"]] })
+};
+var IDMAP = { "045e:02e0": "xboxone", "045e:02fd": "xboxone", "045e:0b20": "xboxone", "045e:0b12": "xboxseries", "045e:0b13": "xboxseries",
+  "045e:0b00": "xboxelite", "045e:0b05": "xboxelite", "045e:0b22": "xboxelite", "045e:0b0a": "xboxadapt", "045e:0b0c": "xboxadapt", "045e:0b21": "xboxadapt",
+  "054c:05c4": "ds4", "054c:09cc": "ds4", "054c:0ce6": "ds5", "054c:0df2": "ds5edge",
+  "0f0d:00f6": "ps3p", "1532:1009": "ps3p", "1532:100a": "ps3p", "2e95:7725": "ps3p",
+  "057e:2009": "switchpro", "057e:2017": "snes", "057e:2019": "n64", "057e:201a": "md", "057e:201e": "md",
+  "2dc8:2100": "sn30", "2dc8:2101": "sn30", "2dc8:6001": "sn30", "2dc8:6100": "sn30", "2dc8:6101": "sn30",
+  "2dc8:6003": "pro2", "2dc8:6006": "pro2", "2dc8:6009": "pro2", "2dc8:ab20": "pro2",
+  "2dc8:3012": "ultimate", "2dc8:301b": "ultimate", "2dc8:3106": "ultimate", "2dc8:6012": "ultimate",
+  "ffff:046e": "gamesir", "05ac:022d": "gamesir", "ffff:046f": "gamesir", "3537:1022": "gamesir", "3537:103c": "gamesir", "3537:10b8": "gamesir",
+  "ffff:0450": "gamesir", "05ac:056b": "gamesir", "0955:7214": "shield", "3250:1002": "atari" };
+function family(p) {
+  var v = (p.vid || "").toLowerCase(), id = v + ":" + (p.pid || "").toLowerCase(), pr = (p.profile || "") + " " + (p.model || "");
+  if (IDMAP[id]) return IDMAP[id];
+  if (v === "045e" || /xbox/i.test(pr)) return "xboxone";
+  if (/dualsense/i.test(pr)) return "ds5";
+  if (v === "054c" || /dualshock/i.test(pr)) return "ds4";
+  if (v === "057e" || /switch/i.test(pr)) return "switchpro";
+  if (v === "2dc8" || /8bitdo/i.test(pr)) return "ultimate";
+  if (/gamesir/i.test(pr)) return "gamesir";
+  if (p.profile === "Generic" && p.model && !/^generic/i.test(p.model)) return "android";
+  return "gen";
+}
+function drawPad(fam, c) {
+  var F = DRAW[fam], s = sv("svg", { viewBox: "-6 -8 332 210", "class": "pad" });
+  c.k = {};
+  function key(name, g) { (c.k[name] = c.k[name] || []).push(g); return g; }
+  function btn(name, x, y, r, lab, col, parent) {
+    var g = key(name, sv("g", {}, parent || s)), ci = sv("circle", { cx: x, cy: y, r: r, "class": "k" }, g), tx = sv("text", { x: x, y: y }, g);
+    tx.textContent = lab;
+    if (col) { ci.setAttribute("style", "stroke:" + col); tx.setAttribute("style", "fill:" + col); }
+    return g;
+  }
+  [[0, 22, "l2", 1], [1, 222, "r2", 3]].forEach(function (t) {
+    var g = key(t[2], sv("g", {}, s));
+    var lab = F.sh[t[3]], hide = F.notrig;
+    sv("rect", { x: t[1], y: -6, width: 76, height: 14, rx: 4, "class": "k", opacity: hide ? ".35" : "1" }, g);
+    c[t[2]] = sv("rect", { x: t[1], y: -6, width: 0, height: 14, rx: 4, "class": "tf", opacity: ".85" }, g);
+    sv("text", { x: t[1] + 38, y: 1 }, g).textContent = lab || (t[0] ? "R2" : "L2");
+  });
+  [["l1", 40, 0], ["r1", 216, 2]].forEach(function (b) {
+    var g = key(b[0], sv("g", {}, s));
+    sv("path", { d: "M" + b[1] + " 32 Q" + (b[1] + 32) + " 14 " + (b[1] + 64) + " 26 L" + (b[1] + 64) + " 30 H" + b[1] + " Z", "class": "k" }, g);
+    sv("text", { x: b[1] + 32, y: 24 }, g).textContent = F.sh[b[2]];
+  });
+  sv("path", { d: BODY[F.body], "class": "body" }, s);
+  if (F.deco === "lightbar") sv("rect", { x: 126, y: 38, width: 68, height: 4, rx: 2, fill: "#4d8bff" }, s);
+  if (F.deco === "mic") sv("rect", { x: 150, y: 100, width: 20, height: 4, rx: 2, fill: "#ff8a3d" }, s);
+  if (F.deco === "fn") { sv("rect", { x: 104, y: 120, width: 18, height: 8, rx: 4, "class": "well" }, s); sv("rect", { x: 198, y: 120, width: 18, height: 8, rx: 4, "class": "well" }, s); }
+  if (F.deco === "paddles4" || F.deco === "paddles2") {
+    var pp = F.deco === "paddles4" ? [[58, 176], [78, 184], [242, 184], [262, 176]] : [[70, 182], [250, 182]];
+    pp.forEach(function (q, i) { sv("rect", { x: q[0] - 9, y: q[1] - 5, width: 18, height: 10, rx: 5, fill: "#3a3542" }, s);
+      var tx = sv("text", { x: q[0], y: q[1] + 14 }, s); tx.textContent = "P" + (i + 1); tx.setAttribute("style", "font-size:8px;fill:#6a6375"); });
+  }
+  if (F.body === "ps" || F.body === "ds5") sv("rect", { x: 122, y: 44, width: 76, height: 50, rx: 8, "class": "well" }, s);
+  [["ls", "l3"], ["rs", "r3"]].forEach(function (k) {
+    var p = F[k[0]];
+    if (!p) { c[k[0]] = null; return; }
+    var g = key(k[1], sv("g", {}, s));
+    sv("circle", { cx: p[0], cy: p[1], r: 24, "class": "well" }, g);
+    c[k[0]] = { n: sv("circle", { cx: p[0], cy: p[1], r: 13, "class": "nub" }, g), x: p[0], y: p[1] };
+  });
+  var d = F.dp;
+  [["up", 0, -15], ["down", 0, 15], ["left", -15, 0], ["right", 15, 0]].forEach(function (a) {
+    var g = key(a[0], sv("g", {}, s));
+    sv("rect", { x: d[0] + a[1] - 8, y: d[1] + a[2] - 8, width: 16, height: 16, rx: 3, "class": "k" }, g);
+    sv("text", { x: d[0] + a[1], y: d[1] + a[2] }, g).textContent = { up: "▲", down: "▼", left: "◀", right: "▶" }[a[0]];
+  });
+  var fg = sv("g", { "class": "face" }, s);
+  if (F.fc) {
+    var f = F.fc;
+    [["triangle", 0, -20], ["circle", 20, 0], ["cross", 0, 20], ["square", -20, 0]].forEach(function (a) {
+      var L = F.face[a[0]]; btn(a[0], f[0] + a[1], f[1] + a[2], 11, L[0], L[1], fg);
+    });
+  } else if (F.adapt) {
+    btn("cross", 190, 120, 34, "A", "#3ddc5a", fg); btn("circle", 268, 120, 34, "B", "#e8413c", fg);
+    btn("square", 214, 64, 8, "X", "", fg); btn("triangle", 236, 64, 8, "Y", "", fg);
+  } else if (F.n64) {
+    btn("cross", 252, 104, 13, "A", "#3f8cff", fg); btn("square", 226, 86, 13, "B", "#3ddc5a", fg);
+    btn("triangle", 268, 64, 8, "C▲", "#f5c518", fg); btn("circle", 286, 80, 8, "C▶", "#f5c518", fg);
+  } else if (F.md) {
+    btn("square", 200, 124, 13, "A", "", fg); btn("cross", 232, 116, 13, "B", "", fg); btn("circle", 264, 108, 13, "C", "", fg);
+    btn("triangle", 222, 86, 8, "Y", "", fg); btn("l1", 194, 92, 8, "X", "", fg); btn("r1", 250, 80, 8, "Z", "", fg);
+  }
+  F.mid.forEach(function (m) {
+    var g = key(m[0], sv("g", {}, s));
+    if (m[4] === "t") { sv("rect", { x: 126, y: 48, width: 68, height: 42, rx: 6, "class": "k" }, g); sv("text", { x: 160, y: 69 }, g).textContent = "TOUCH"; return; }
+    if (m[4] === "g") sv("circle", { cx: m[2], cy: m[3], r: 12, "class": "k" }, g);
+    else if (m[4] === "s") sv("circle", { cx: m[2], cy: m[3], r: 8, "class": "k" }, g);
+    else sv("rect", { x: m[2] - 20, y: m[3] - 7, width: 40, height: 14, rx: 7, "class": "k" }, g);
+    var tx = sv("text", { x: m[2], y: m[4] === "r" ? m[3] + 16 : m[3] }, g); tx.textContent = m[1];
+    if (m[4] === "r") tx.setAttribute("style", "font-size:9px");
+    if (m[4] === "g" && m[1].length > 2) tx.setAttribute("style", "font-size:8px");
+  });
+  c.root.style.setProperty("--acc", F.acc);
+  return s;
+}
+function newCard(p) {
+  var fam = family(p);
+  var c = { root: el("div", "card"), fam: fam }, top = el("div", "ctop"), input = el("div", "input"), acts = el("div", "acts");
+  c.root.setAttribute("data-fam", fam); c.root.title = DRAW[fam].name;
+  c.model = el("span", "model"); c.slot = el("span", "slot");
+  top.appendChild(c.model); top.appendChild(c.slot);
+  c.sub = el("div", "sub");
+  c.chips = el("div", "chips");
+  input.appendChild(drawPad(fam, c)); input.appendChild(c.chips);
+  c.batt = el("div", "batt"); c.cell = el("div", "cell"); c.fill = el("b"); c.btxt = el("span");
+  c.cell.appendChild(c.fill); c.batt.appendChild(c.cell); c.batt.appendChild(c.btxt);
+  var ps = el("button", "btn ps", t("pressPs")), hum = el("button", "btn hum", t("rumble")), fg = el("button", "btn cut", t("forget"));
+  ps.title = t("psTitle");
+  hum.title = t("rumbleTitle");
+  ps.onclick = function () { act("/api/ps?slot=" + c.n, t("psDone", { n: c.n })); };
+  hum.onclick = function () { act("/api/rumble?slot=" + c.n, t("rumbleDone", { n: c.n }), t("noRumble")); };
+  armed(fg, "sure", function () { act("/api/forget?addr=" + c.addr, t("forgotten")); });
+  [ps, hum, fg].forEach(function (b) { acts.appendChild(b); });
+  [top, c.sub, input, c.batt, acts].forEach(function (n) { c.root.appendChild(n); });
+  return c;
+}
+function moveStick(s, x, y) { if (!s) return; s.n.setAttribute("cx", s.x + (x - 127.5) / 127.5 * 12); s.n.setAttribute("cy", s.y + (y - 127.5) / 127.5 * 12); }
+function renderPads(pads) {
+  var box = $("cards"), seen = {};
+  pads.forEach(function (p) {
+    var key = p.slot + "/" + p.addr, c = cards[key];
+    if (c && c.fam !== family(p)) { box.removeChild(c.root); c = null; }
+    if (!c) { c = cards[key] = newCard(p); }
+    seen[key] = 1;
+    c.n = p.slot; c.addr = p.addr;
+    c.model.textContent = p.model || p.profile;
+    c.slot.textContent = "P" + p.slot;
+    c.sub.textContent = p.vid + ":" + p.pid + "  ·  " + p.addr;
+    c.l2.setAttribute("width", p.l2 / 255 * 76); c.r2.setAttribute("width", p.r2 / 255 * 76);
+    moveStick(c.ls, p.lx, p.ly); moveStick(c.rs, p.rx, p.ry);
+    var on = {};
+    p.buttons.forEach(function (b) { on[b] = 1; });
+    if (p.l2 > 30) on.l2 = 1;
+    if (p.r2 > 30) on.r2 = 1;
+    Object.keys(c.k).forEach(function (b) { c.k[b].forEach(function (g) { g.setAttribute("class", on[b] ? "on" : ""); }); });
+    var chips = p.buttons.map(function (b) { return BTN[b] || b; }).join("|");
+    if (c.chips.dataset.v !== chips) {
+      c.chips.dataset.v = chips;
+      c.chips.textContent = "";
+      p.buttons.forEach(function (b) { c.chips.appendChild(el("span", "", BTN[b] || b)); });
+    }
+    if (p.battery >= 0) {
+      c.cell.hidden = false;
+      c.fill.style.width = p.battery + "%";
+      c.fill.style.background = p.battery <= 20 ? "var(--bad)" : "var(--good)";
+      c.btxt.textContent = t("battery", { n: p.battery }) + (p.charging ? " · " + t("charging") : "");
+    } else { c.cell.hidden = true; c.btxt.textContent = t("noBattery"); }
+    if (c.root.parentNode !== box) box.appendChild(c.root);
+  });
+  Object.keys(cards).forEach(function (k) { if (!seen[k]) { box.removeChild(cards[k].root); delete cards[k]; } });
+  var empty = box.querySelector(".empty");
+  if (!pads.length && !empty) box.appendChild(el("div", "empty", t("noPads")));
+  if (pads.length && empty) box.removeChild(empty);
+}
+function renderPaired(list, pads) {
+  var sig = JSON.stringify(list) + "#" + pads.map(function (p) { return p.addr; }).join(",");
+  if (sig === pairedSig) return;
+  pairedSig = sig;
+  var box = $("paired");
+  box.textContent = "";
+  if (!list.length) { box.appendChild(el("div", "item", t("nothingPaired"))); return; }
+  list.forEach(function (p) {
+    var row = el("div", "item"), who = el("div", "who"), live = null;
+    pads.forEach(function (x) { if (x.addr === p.addr) live = x; });
+    row.appendChild(el("i", "dot" + (p.connected ? " on" : "")));
+    who.appendChild(el("strong", "", live ? (live.model || live.profile) + " · P" + live.slot : (p.connected ? t("connecting") : t("offlinePad"))));
+    who.appendChild(el("span", "", p.addr + "  ·  " + (p.vid === "0000" && p.pid === "0000" ? t("unknownId") : p.vid + ":" + p.pid)));
+    row.appendChild(who);
+    if (p.le) row.appendChild(el("span", "tag", "BLE"));
+    if (live) {
+      var ps = el("button", "btn small ps", t("pressPs"));
+      ps.onclick = function () { act("/api/ps?slot=" + live.slot, t("psDone", { n: live.slot })); };
+      row.appendChild(ps);
+      row.appendChild(document.createTextNode("\u00a0\u00a0"));
+    }
+    var fg = el("button", "btn small cut", t("forget"));
+    armed(fg, "sure", function () { act("/api/forget?addr=" + p.addr, t("forgotten")); });
+    row.appendChild(fg);
+    box.appendChild(row);
+  });
+}
+
+function render(s) {
+  if (!s) return;
+  var bt = s.bluetooth, live = $("live");
+  $("ver").textContent = "v" + s.version;
+  live.className = "live " + (bt === "ok" ? "ok" : bt === "failed" ? "bad" : "wait");
+  $("liveText").textContent = t(s.pairing > 0 ? "pairingNow" : bt === "ok" ? "running" : bt === "failed" ? "noBt" : "startingBt");
+  $("fBt").textContent = t(bt === "ok" ? "ready" : bt === "failed" ? "failedBt" : "starting");
+  $("fPads").textContent = s.pads.length + " / 4";
+  $("fPaired").textContent = s.paired.length;
+  $("retryRow").hidden = bt !== "failed";
+  var rk = { nochip: "rNochip", lost: "rLost", novpad: "rNovpad" }[s.reasonKey];
+  if (bt === "failed") { $("reason").textContent = rk ? t(rk) : s.reason || t("rNochip"); $("reason").className = "note alert"; }
+  else { $("reason").innerHTML = esc(t("tipUsers")).replace("{ps}", "<b>" + esc(t("pressPs")) + "</b>"); $("reason").className = "note"; }
+  $("ring").style.width = (s.pairing > 0 ? s.pairing / 60 * 100 : 0) + "%";
+  $("pairText").textContent = s.pairing > 0
+    ? t("searching", { n: s.pairing }) : t("pairIdle");
+  $("pair").disabled = s.pairing > 0 || bt !== "ok";
+  $("pair").textContent = s.pairing > 0 ? t("pairingSec", { n: s.pairing }) : t("pairBtn");
+  $("padsHint").textContent = s.combo ? t("hotkey", { c: s.combo }) : t("upTo4");
+  renderPads(s.pads);
+  renderPaired(s.paired, s.pads);
+}
+var inFlight = false;
+function refresh() {
+  if (inFlight) return Promise.resolve();
+  inFlight = true;
+  return api("GET", "/api/state").then(function (s) {
+    inFlight = false;
+    lastState = s;
+    if (!langFromConsole && s.lang && I18N[s.lang]) {      /* the console's choice wins over this browser's */
+      langFromConsole = true;
+      if (s.lang !== LANG) { setLang(s.lang, false); return; }
+    }
+    render(s);
+  }, function () {
+    inFlight = false;
+    $("live").className = "live bad";
+    $("liveText").textContent = t("offline");
+  });
+}
+function loadLog() {
+  return api("GET", "/api/log").then(function (txt) {
+    var pre = $("log"), end = pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 30;
+    pre.textContent = txt || t("empty");
+    if (end) pre.scrollTop = pre.scrollHeight;
+  }, function () { $("log").textContent = t("logError"); });
+}
+
+$("pair").onclick = function () { act("/api/pair", t("pairStarted")); };
+$("retry").onclick = function () { act("/api/retry", t("retrying")); };
+$("logRefresh").onclick = loadLog;
+$("logBox").addEventListener("toggle", function () { if ($("logBox").open) loadLog(); });
+armed($("stop"), "tapStop", function () {
+  api("POST", "/api/stop").then(function () { toast(t("stopping")); }, function () {});
+  $("liveText").textContent = t("stoppingShort");
+});
+$("langbtn").addEventListener("click", function (ev) { ev.stopPropagation(); toggleLangList(); });
+document.addEventListener("click", function (ev) {
+  if ($("langlist").getAttribute("data-state") === "open" && !$("langbox").contains(ev.target)) toggleLangList(false);
+});
+document.addEventListener("keydown", function (ev) { if (ev.keyCode === 27) toggleLangList(false); });
+applyLang();
+
+refresh();
+setInterval(refresh, 1000);
+setInterval(function () { if ($("logBox").open) loadLog(); }, 3000);
+</script>
+</body>
+</html>

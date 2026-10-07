@@ -1,0 +1,341 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PadBridge PS5 - Bluetooth controllers on a jailbroken PS5</title>
+<meta name="description" content="PadBridge PS5 pairs Xbox, DualShock 4, Switch Pro, 8BitDo and other Bluetooth controllers through the PS5's own Bluetooth chip and presents each one as a virtual DualSense. No dongle needed.">
+<meta property="og:title" content="PadBridge PS5">
+<meta property="og:description" content="Use Xbox, DualShock 4 and other Bluetooth controllers on a jailbroken PS5. No dongle needed.">
+<meta property="og:image" content="img/icon.png">
+<meta name="theme-color" content="#05080f">
+<link rel="icon" href="img/favicon.png">
+<style>
+:root {
+  --ink: #e8f1ff; --mute: #8193ad; --void: #05080f; --deck: #0b1322; --card: #101b2e; --edge: #1d2c45;
+  --cyan: #00e5ff; --blue: #2f7bff; --violet: #7a5cff; --good: #2ee6a6; --warn: #ffc24b;
+  --grad: linear-gradient(90deg, var(--cyan), var(--blue) 50%, var(--violet));
+  --glow: 0 0 0 1px rgba(0, 229, 255, .35), 0 0 22px rgba(0, 229, 255, .18);
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  margin: 0; color: var(--ink); background: var(--void);
+  font: 16px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, Ubuntu, sans-serif;
+  background-image:
+    radial-gradient(900px 500px at 15% -10%, rgba(0, 229, 255, .13), transparent 60%),
+    radial-gradient(900px 600px at 95% 0%, rgba(122, 92, 255, .16), transparent 60%);
+  background-repeat: no-repeat;
+}
+a { color: var(--cyan); text-decoration: none; }
+a:hover { text-decoration: underline; }
+code, pre { font-family: ui-monospace, SFMono-Regular, Consolas, Menlo, monospace; }
+code { background: #0d1729; border: 1px solid var(--edge); border-radius: 6px; padding: 1px 6px; font-size: .9em; }
+pre { background: #070d18; border: 1px solid var(--edge); border-radius: 12px; padding: 14px 16px; overflow-x: auto; margin: 10px 0 0; }
+pre code { background: none; border: 0; padding: 0; }
+.wrap { max-width: 1080px; margin: 0 auto; padding: 0 22px; }
+
+nav { position: sticky; top: 0; z-index: 5; backdrop-filter: blur(10px); background: rgba(5, 8, 15, .78); border-bottom: 1px solid var(--edge); }
+nav .wrap { display: flex; align-items: center; gap: 22px; height: 58px; }
+nav .brand { display: flex; align-items: center; gap: 10px; color: var(--ink); font-weight: 700; letter-spacing: .2px; }
+nav .brand img { width: 30px; height: 30px; border-radius: 8px; }
+nav .links { margin-left: auto; display: flex; gap: 18px; font-size: 14.5px; }
+nav .links a { color: var(--mute); }
+nav .links a:hover { color: var(--ink); text-decoration: none; }
+
+.hero { padding: 72px 0 56px; }
+.hero .wrap { display: grid; grid-template-columns: 1.25fr .75fr; gap: 40px; align-items: center; }
+.tag { display: inline-block; font-size: 13px; color: var(--cyan); border: 1px solid rgba(0, 229, 255, .35); border-radius: 999px; padding: 3px 12px; margin-bottom: 16px; background: rgba(0, 229, 255, .06); }
+h1 { font-size: clamp(36px, 5.4vw, 60px); line-height: 1.05; margin: 0 0 16px; letter-spacing: -1px; }
+h1 .g { background: var(--grad); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.lead { font-size: 19px; color: #c3d2ea; margin: 0 0 28px; max-width: 34em; }
+.btns { display: flex; gap: 14px; flex-wrap: wrap; }
+.btn { display: inline-flex; align-items: center; gap: 9px; padding: 13px 22px; border-radius: 12px; font-weight: 650; font-size: 16px; border: 1px solid var(--edge); color: var(--ink); background: var(--card); }
+.btn:hover { text-decoration: none; border-color: rgba(0, 229, 255, .5); }
+.btn.primary { border: 0; color: #031018; background: var(--grad); box-shadow: 0 8px 30px rgba(47, 123, 255, .35), 0 0 24px rgba(0, 229, 255, .25); }
+.btn.primary:hover { filter: brightness(1.08); }
+.btn svg { width: 18px; height: 18px; }
+.hero-art { position: relative; justify-self: center; }
+.hero-art img { width: min(320px, 70vw); border-radius: 26%; display: block; filter: drop-shadow(0 0 40px rgba(0, 229, 255, .28)) drop-shadow(0 0 70px rgba(122, 92, 255, .25)); }
+.meta { margin-top: 22px; color: var(--mute); font-size: 14px; }
+.dev { display: inline-flex; align-items: center; gap: 8px; margin: 0 0 18px; font-size: 15px; color: var(--mute); }
+.dev a { font-weight: 700; }
+.dev svg { width: 16px; height: 16px; color: var(--cyan); }
+
+section { padding: 56px 0; }
+section + section { border-top: 1px solid rgba(29, 44, 69, .6); }
+h2 { font-size: 30px; margin: 0 0 8px; letter-spacing: -.4px; }
+h2::after { content: ""; display: block; width: 56px; height: 3px; border-radius: 3px; background: var(--grad); margin-top: 10px; }
+.sub { color: var(--mute); margin: 12px 0 28px; max-width: 46em; }
+h3 { margin: 0 0 6px; font-size: 18px; }
+
+.grid { display: grid; gap: 16px; }
+.g3 { grid-template-columns: repeat(3, 1fr); }
+.g2 { grid-template-columns: repeat(2, 1fr); }
+.card { background: linear-gradient(180deg, rgba(16, 27, 46, .95), rgba(11, 19, 34, .95)); border: 1px solid var(--edge); border-radius: 16px; padding: 20px 20px 18px; }
+.card p { margin: 0; color: #b4c3db; font-size: 15px; }
+.card .ic { width: 38px; height: 38px; border-radius: 10px; display: grid; place-items: center; margin-bottom: 12px; background: rgba(0, 229, 255, .08); box-shadow: var(--glow); color: var(--cyan); }
+.card .ic svg { width: 20px; height: 20px; }
+
+table { width: 100%; border-collapse: collapse; background: var(--card); border: 1px solid var(--edge); border-radius: 14px; overflow: hidden; }
+th, td { text-align: left; padding: 12px 16px; border-bottom: 1px solid var(--edge); vertical-align: top; font-size: 15px; }
+th { color: var(--mute); font-weight: 600; font-size: 13px; text-transform: uppercase; letter-spacing: .6px; background: #0c1526; }
+tr:last-child td { border-bottom: 0; }
+.pill { display: inline-block; font-size: 12.5px; font-weight: 650; border-radius: 999px; padding: 2px 10px; white-space: nowrap; }
+.pill.ok { color: var(--good); background: rgba(46, 230, 166, .1); border: 1px solid rgba(46, 230, 166, .35); }
+.pill.try { color: var(--warn); background: rgba(255, 194, 75, .08); border: 1px solid rgba(255, 194, 75, .3); }
+.dim { color: var(--mute); font-size: 13.5px; }
+
+ol.steps { list-style: none; padding: 0; margin: 0; counter-reset: s; display: grid; gap: 14px; }
+ol.steps > li { counter-increment: s; position: relative; padding: 18px 20px 18px 74px; background: var(--card); border: 1px solid var(--edge); border-radius: 16px; }
+ol.steps > li::before { content: counter(s); position: absolute; left: 20px; top: 18px; width: 36px; height: 36px; border-radius: 10px; display: grid; place-items: center; font-weight: 800; color: #031018; background: var(--grad); }
+ol.steps p { margin: 4px 0 0; color: #b4c3db; }
+ol.steps ul { margin: 8px 0 0; padding-left: 20px; color: #b4c3db; }
+.note { margin-top: 18px; padding: 14px 18px; border-radius: 14px; border: 1px solid rgba(255, 194, 75, .35); background: rgba(255, 194, 75, .06); color: #ead9b3; font-size: 15px; }
+.note b { color: var(--warn); }
+.hl { border-color: rgba(0, 229, 255, .45) !important; box-shadow: var(--glow); }
+
+.langs { display: flex; flex-wrap: wrap; gap: 10px; }
+.lang { padding: 9px 16px; border-radius: 12px; background: var(--card); border: 1px solid var(--edge); font-size: 15.5px; }
+.lang small { color: var(--mute); margin-left: 6px; }
+
+.shots { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
+.shots figure { margin: 0; }
+.shots img { width: 100%; aspect-ratio: 16/10; object-fit: cover; object-position: top; display: block; border-radius: 14px; border: 1px solid var(--edge); box-shadow: 0 12px 40px rgba(0, 0, 0, .45); }
+.shots figcaption { color: var(--mute); font-size: 14px; margin-top: 8px; text-align: center; }
+
+details { background: var(--card); border: 1px solid var(--edge); border-radius: 14px; padding: 0 18px; }
+details + details { margin-top: 10px; }
+summary { cursor: pointer; padding: 15px 0; font-weight: 600; list-style: none; position: relative; padding-right: 28px; }
+summary::-webkit-details-marker { display: none; }
+summary::after { content: "+"; position: absolute; right: 0; top: 12px; font-size: 22px; color: var(--cyan); }
+details[open] summary::after { content: "\2212"; }
+details > div { padding: 0 0 16px; color: #b4c3db; font-size: 15px; }
+details > div p { margin: 0 0 8px; }
+
+footer { border-top: 1px solid var(--edge); padding: 30px 0 46px; color: var(--mute); font-size: 14px; }
+footer .wrap { display: flex; flex-wrap: wrap; gap: 14px 28px; align-items: center; }
+footer .right { margin-left: auto; display: flex; gap: 18px; }
+
+@media (max-width: 860px) {
+  .hero .wrap { grid-template-columns: 1fr; text-align: left; }
+  .hero-art { order: -1; justify-self: start; }
+  .hero-art img { width: 150px; }
+  .g3, .g2, .shots { grid-template-columns: 1fr; }
+  nav .links { display: none; }
+}
+
+#langbox { position: relative; margin-left: 8px; }
+#langbtn { display: flex; align-items: center; gap: 8px; font: inherit; font-size: 14px; font-weight: 700; color: var(--ink);
+  padding: 7px 12px; border-radius: 10px; border: 1px solid var(--edge); background: var(--card); cursor: pointer; }
+.flag { display: inline-block; width: 22px; height: 15px; flex: 0 0 22px; border-radius: 2px; overflow: hidden; }
+.flag svg { display: block; width: 100%; height: 100%; }
+#langlist { display: none; position: absolute; top: calc(100% + 6px); right: 0; z-index: 20; min-width: 200px;
+  padding: 8px; border-radius: 14px; border: 1px solid var(--edge); background: var(--deck);
+  box-shadow: 0 16px 40px rgba(0,0,0,.45); max-height: 70vh; overflow: auto; }
+#langlist.show { display: grid; gap: 4px; }
+.langopt { display: flex; align-items: center; gap: 10px; width: 100%; font: inherit; font-size: 14.5px; font-weight: 650; color: var(--ink);
+  padding: 8px 10px; border-radius: 10px; border: 1px solid transparent; background: transparent; cursor: pointer; text-align: left; }
+.langopt[data-state="on"] { color: #031018; background: linear-gradient(90deg, var(--cyan), var(--blue)); }
+[dir="rtl"] #langbox { margin-left: 0; margin-right: 8px; }
+[dir="rtl"] #langlist { right: auto; left: 0; }
+[dir="rtl"] .langopt { text-align: right; }
+[dir="rtl"] nav .links { margin-left: 0; margin-right: auto; }
+[dir="rtl"] footer .right { margin-left: 0; margin-right: auto; }
+[dir="rtl"] ol.steps > li { padding: 18px 74px 18px 20px; }
+[dir="rtl"] ol.steps > li::before { left: auto; right: 20px; }
+[dir="rtl"] ol.steps ul { padding-left: 0; padding-right: 20px; }
+[dir="rtl"] summary { padding-right: 0; padding-left: 28px; }
+[dir="rtl"] summary::after { right: auto; left: 0; }
+[dir="rtl"] th, [dir="rtl"] td { text-align: right; }
+code, pre { direction: ltr; unicode-bidi: embed; }
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="wrap">
+    <a class="brand" href="#top"><img src="img/icon.png" alt="">PadBridge PS5</a>
+    <div class="links">
+      <a href="#features" data-i18n="navFeatures">Features</a>
+      <a href="#controllers" data-i18n="navControllers">Controllers</a>
+      <a href="#howto" data-i18n="navHowto">How to</a>
+      <a href="#languages" data-i18n="navLanguages">Languages</a>
+      <a href="#screenshots" data-i18n="navScreenshots">Screenshots</a>
+      <a href="#faq" data-i18n="navFaq">FAQ</a>
+      <a href="https://github.com/X-F1REBALL-X/PadBridge-PS5" data-i18n="navGithub">GitHub</a>
+    </div>
+    <div id="langbox">
+      <button type="button" id="langbtn" aria-haspopup="true"><span class="flag" id="langflag"></span><span data-i18n="language">Language</span></button>
+      <div id="langlist" role="menu"></div>
+    </div>
+  </div>
+</nav>
+
+<header class="hero" id="top">
+  <div class="wrap">
+    <div>
+      <span class="tag" data-i18n="tag">Beta · payload for jailbroken PS5</span>
+      <h1><span data-i18n="h1a">Your Bluetooth controllers,</span> <span class="g" data-i18n="h1b">on the PS5.</span></h1>
+      <p class="dev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 18l6-6-6-6M8 6l-6 6 6 6"/></svg><span data-i18n="credit">PadBridge PS5 · Developed by X-F1REBALL-X</span></p>
+      <p class="dev orig" style="margin-top:-12px;font-size:13px">Based on <a href="https://github.com/gmh5225/AnyPad-PS5" target="_blank" rel="noopener">AnyPad-PS5</a>&nbsp;by&nbsp;<b>sinfiltros</b>&nbsp;(GPL-3.0)</p>
+      <p class="lead" data-i18n="lead">PadBridge pairs Xbox, DualShock 4, Switch Pro, 8BitDo and other Bluetooth controllers through the console's own Bluetooth chip and presents each one to the system and to games as a virtual DualSense. No dongle, no firmware changes, all from a web page served by the console.</p>
+      <div class="btns">
+        <a class="btn primary" href="https://github.com/X-F1REBALL-X/PadBridge-PS5/releases/latest">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M6 11l6 6 6-6M4 21h16"/></svg>
+          <span data-i18n="btnDownload">Download latest</span></a>
+        <a class="btn" href="#howto" data-i18n="btnHowto">How to use it</a>
+        <a class="btn" href="https://github.com/X-F1REBALL-X/PadBridge-PS5" data-i18n="btnSource">Source on GitHub</a>
+      </div>
+      <p class="meta" data-i18n="meta">One ELF file · up to 4 controllers at once · loads on port 9021 · web menu on port 8095 · GPL-3.0-or-later</p>
+    </div>
+    <div class="hero-art"><img src="img/icon.png" alt="PadBridge PS5 icon"></div>
+  </div>
+</header>
+
+<main>
+
+<section id="features">
+  <div class="wrap">
+    <h2 data-i18n="featuresTitle">Features</h2>
+    <p class="sub" data-i18n="featuresSub">Runs in the background beside the system. It does not modify games, the firmware or the jailbreak.</p>
+    <div class="grid g3">
+      <div class="card"><div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 7l10 10-5 5V2l5 5L7 17"/></svg></div>
+        <h3 data-i18n="featDongleTitle">No dongle</h3><p data-i18n="featDongle">Uses the PS5's own Bluetooth chip, shared with the system: Bluetooth Classic and Bluetooth LE.</p></div>
+      <div class="card"><div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="6"/><path d="M7 12h4M9 10v4M16 11h.01M18 13h.01"/></svg></div>
+        <h3 data-i18n="featVpadTitle">Virtual DualSense</h3><p data-i18n="featVpad">Each controller appears to the console and to games as a DualSense. You can connect up to four at once; all of them work simultaneously.</p></div>
+      <div class="card"><div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg></div>
+        <h3 data-i18n="featWebTitle">Web menu</h3><p data-i18n="featWeb">Pair, watch live input, forget pads, test rumble and read the log from any phone or PC at :8095, or from the media row.</p></div>
+      <div class="card"><div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7L21 8M21 3v5h-5"/></svg></div>
+        <h3 data-i18n="featReconTitle">Automatic reconnect</h3><p data-i18n="featRecon">After the first pairing and one power cycle, switching the controller on is enough. Keys are stored on the console.</p></div>
+      <div class="card"><div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v4l3 2"/></svg></div>
+        <h3 data-i18n="featPsTitle">Press PS</h3><p data-i18n="featPs">Controllers without a PS button can still take the console's focus with one tap on the web page.</p></div>
+      <div class="card"><div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 8h14M5 8a7 7 0 0 0 14 0M12 2v6M3 14c3 4 15 4 18 0"/></svg></div>
+        <h3 data-i18n="featLangTitle">Eleven languages</h3><p data-i18n="featLang">The page and the console notifications, including right-to-left Arabic and Hebrew, with the full controller model name.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="controllers">
+  <div class="wrap">
+    <h2 data-i18n="ctrlTitle">Tested controllers</h2>
+    <p class="sub"><span data-i18n="ctrlSub">Tested on real consoles. Many more are supported in the code and pass the simulator tests; see COMPATIBILITY.md for every ID.</span>
+      <a href="https://github.com/X-F1REBALL-X/PadBridge-PS5/blob/main/COMPATIBILITY.md">COMPATIBILITY.md</a></p>
+    <table>
+      <tr><th data-i18n="thStatus">Status</th><th data-i18n="thController">Controller</th><th data-i18n="thDetails">Details</th></tr>
+      <tr><td><span class="pill ok" data-i18n="pillTested">Tested</span></td><td><b data-i18n="ctrlXbox">Xbox Series X|S over Bluetooth LE</b></td><td><code>045e:0b13</code> <span class="dim">&middot; PS5 firmware 10.20</span></td></tr>
+      <tr><td><span class="pill ok" data-i18n="pillTested">Tested</span></td><td><b data-i18n="ctrlDs4">DualShock 4 v2</b></td><td><code>054c:09cc</code> <span class="dim">&middot; PS5 firmware 10.20</span></td></tr>
+      <tr><td><span class="pill ok" data-i18n="pillTested">Tested</span></td><td><b data-i18n="ctrlDs4v1">DualShock 4 v1</b></td><td><code>054c:05c4</code> <span class="dim">&middot; PS5 firmware 10.20</span></td></tr>
+      <tr><td><span class="pill try" data-i18n="pillSupported">Supported</span></td><td data-i18n="ctrlOther">Other Xbox One / Elite / Adaptive models, DualSense, Switch Pro and Switch Online pads, 8BitDo, GameSir and others</td><td><span class="dim" data-i18n="ctrlOtherDet">Not tried on a console yet. A generic profile covers any Bluetooth HID gamepad, adjustable with a .map file.</span></td></tr>
+    </table>
+  </div>
+</section>
+
+<section id="howto">
+  <div class="wrap">
+    <h2 data-i18n="howtoTitle">How to use it</h2>
+    <p class="sub" data-i18n="howtoSub">You need a jailbroken PS5 with an ELF loader on port 9021 (elfldr) or Payload Manager, and a phone or PC on the same network.</p>
+    <ol class="steps">
+      <li><h3 data-i18n="step1Title">Prepare</h3>
+        <p data-i18n="step1">Have a jailbroken PS5 with elfldr (port 9021) or Payload Manager ready, and a phone or PC on the same network as the console.</p></li>
+      <li><h3 data-i18n="step2Title">Load the ELF on port 9021</h3>
+        <p data-i18n="step2a">Download PadBridge-PS5-<version>.elf from the latest release and send it to the loader:</p>
+        <pre><code>nc -q0 &lt;ps5-ip&gt; 9021 &lt; PadBridge-PS5-&lt;version&gt;.elf</code></pre>
+        <p data-i18n="step2b">or load it through Payload Manager. The console shows a notification with the menu address, and a PadBridge home icon appears in the media row.</p></li>
+      <li><h3 data-i18n="step3Title">Open the PadBridge home icon</h3>
+        <p data-i18n="step3">After the ELF is loaded, open the PadBridge entry in the media row, or open http://<ps5-ip>:8095/ on a phone or PC.</p></li>
+      <li><h3 data-i18n="step4Title">Press Pair so the controller blinks fast</h3>
+        <p data-i18n="step4">Press Pair a controller (60 s) on the page, then put the controller in pairing mode. Do not use the PS5's own Bluetooth search in Settings.</p>
+        <ul>
+          <li data-i18n="step4xbox">Xbox: turn it on, then hold the pair button on top until the Xbox logo blinks fast. A slow blink only means it is trying to reconnect.</li>
+          <li data-i18n="step4ds4">DualShock 4: hold Share + PS until the light bar flashes.</li>
+          <li data-i18n="step4sw">Switch Pro: hold the sync button next to the USB-C port.</li>
+        </ul></li>
+      <li class="hl"><h3 data-i18n="step5Title">First time only: turn the paired controller off, then on</h3>
+        <p data-i18n="step5">Once PadBridge has detected the controller, power it off, then turn it on again. This is required the first time so it starts working with the stored keys. After that power cycle you do not need to pair again — pairing is saved on the console. After a reboot or a new run of PadBridge, just switch the controller on.</p></li>
+    </ol>
+    <div class="note" data-i18n="noteMulti">Up to four bridged controllers can be connected at once; they all work simultaneously.</div>
+    <div class="note" data-i18n="noteAfter">After pairing succeeds: turn the DualSense off to play with the bridged controller. PadBridge does not power the DualSense down; on the DualSense, hold PS until it powers down. Updating or stopping: press Stop PadBridge (advanced) twice at the bottom of the page before loading a new ELF. PadBridge also stops by itself before rest mode; load it again after waking the console.</div>
+  </div>
+</section>
+
+<section id="languages">
+  <div class="wrap">
+    <h2 data-i18n="langTitle">Eleven languages</h2>
+    <p class="sub" data-i18n="langSub">Pick one with the Language button here or on the console page. On the console the choice is saved so every browser and the notifications follow it. English is the default.</p>
+    <div class="langs">
+      <span class="lang">English</span>
+      <span class="lang"><span dir="rtl" lang="ar">العربية</span><small data-i18n="langArNote">Arabic, right to left</small></span>
+      <span class="lang"><span dir="rtl" lang="he">עברית</span><small data-i18n="langHeNote">Hebrew, right to left</small></span>
+      <span class="lang">Español</span>
+      <span class="lang">Français</span>
+      <span class="lang">Deutsch</span>
+      <span class="lang">Português</span>
+      <span class="lang">Русский</span>
+      <span class="lang">日本語</span>
+      <span class="lang">中文</span>
+      <span class="lang">Italiano</span>
+    </div>
+  </div>
+</section>
+
+<section id="rumble">
+  <div class="wrap">
+    <h2 data-i18n="rumbleTitle">Rumble limits</h2>
+    <div class="grid g2" style="margin-top:22px">
+      <div class="card"><h3 data-i18n="rumbleOkTitle">What works</h3><p data-i18n="rumbleOk">The Rumble button on a controller's card makes it rumble for 500 ms, to check the link.</p></div>
+      <div class="card"><h3 data-i18n="rumbleNoTitle">Not yet</h3><p data-i18n="rumbleNo">Rumble sent by games is not passed to the controller. There is no known way yet to read the rumble a game sends to a virtual DualSense.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="screenshots">
+  <div class="wrap">
+    <h2 data-i18n="shotsTitle">Screenshots</h2>
+    <p class="sub" data-i18n="shotsSub">The web menu served by the console.</p>
+    <div class="shots">
+      <figure><a href="img/ui-en.jpg" data-he="img/ui-he.jpg"><img src="img/ui-en.jpg" data-he="img/ui-he.jpg" alt="PadBridge 0.1.9 web menu" loading="lazy"></a><figcaption data-i18n="capMenu">The menu</figcaption></figure>
+      <figure><a href="img/ui-all-controllers.jpg"><img src="img/ui-controllers-thumb.jpg" alt="Drawn controller for each family with live presses" loading="lazy"></a><figcaption data-i18n="capCtl">A drawn controller per family, live presses</figcaption></figure>
+      <figure><a href="img/ui-he.jpg" data-he="img/ui-en.jpg"><img src="img/ui-he.jpg" data-he="img/ui-en.jpg" alt="The menu in another language" loading="lazy"></a><figcaption data-i18n="capAlt">Hebrew, right to left</figcaption></figure>
+    </div>
+  </div>
+</section>
+
+<section id="faq">
+  <div class="wrap">
+    <h2 data-i18n="faqTitle">FAQ and troubleshooting</h2>
+    <div style="margin-top:22px">
+      <details><summary data-i18n="faq1q">The controller is not found when pairing</summary><div>
+        <p data-i18n="faq1a">Make sure pairing mode is on: for Xbox the logo must blink fast, not slowly. Start the search from the PadBridge page, not from the PS5 Settings, and keep the controller close to the console.</p></div></details>
+      <details><summary data-i18n="faq2q">It paired, but does not work well the first time</summary><div>
+        <p data-i18n="faq2a">Once PadBridge detects the controller, turn that controller off, then on again. This first power cycle is required. After that, pairing is saved and you only need to switch the controller on.</p></div></details>
+      <details><summary data-i18n="faq3q">Do I need to pair again after a reboot?</summary><div>
+        <p data-i18n="faq3a">No. Pairing is saved on the console. After a reboot or a new run of PadBridge, just turn the controller on. You only need the off-then-on power cycle the first time after pairing.</p></div></details>
+      <details><summary data-i18n="faq4q">The controller is connected but games ignore it</summary><div>
+        <p data-i18n="faq4a">Turn the DualSense off to play with the bridged controller (hold PS on the DualSense — PadBridge does not turn it off). Use Press PS on the controller's card when the DualSense takes the focus back.</p></div></details>
+      <details><summary data-i18n="faq5q">My DualSense got paired by mistake</summary><div>
+        <p data-i18n="faq5a">Reset the DualSense with the small hole on the back (about 5 seconds) and reconnect it with a USB cable. To turn the DualSense off yourself, hold the PS button until it powers down — PadBridge does not turn it off.</p></div></details>
+      <details><summary data-i18n="faq6q">The page does not open</summary><div>
+        <p data-i18n="faq6a">Check the address from the console notification (http://<ps5-ip>:8095/) and that your phone or PC is on the same network. After rest mode PadBridge is stopped: load the ELF again.</p></div></details>
+      <details><summary data-i18n="faq7q">The console says PadBridge is already running</summary><div>
+        <p data-i18n="faq7a">Stop the running copy with Stop PadBridge (advanced) on the page, pressed twice, then load the new ELF.</p></div></details>
+      <details><summary data-i18n="faq8q">Where is the log? How do I report a problem?</summary><div>
+        <p data-i18n="faq8a">The log is on the page under Log and in /data/padbridge/padbridge.log. Open an issue with the controller model, console firmware, what worked, and the log.</p></div></details>
+      <details><summary data-i18n="faq9q">Does it change my console?</summary><div>
+        <p data-i18n="faq9a">No. It does not modify games, the firmware or the jailbreak. Its files live in /data/padbridge/, and Bluetooth is left as it was when it stops.</p></div></details>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer>
+  <div class="wrap">
+    <span data-i18n="footerLeft">PadBridge PS5 · GPL-3.0-or-later · License · Third-party credits in NOTICE</span>
+    <span class="right"><a href="https://github.com/X-F1REBALL-X/PadBridge-PS5/releases/latest" data-i18n="footerDl">Download</a><a href="https://github.com/X-F1REBALL-X/PadBridge-PS5/blob/main/CHANGELOG.md" data-i18n="footerCl">Changelog</a><a href="https://github.com/X-F1REBALL-X/PadBridge-PS5" data-i18n="footerGh">GitHub</a></span>
+  </div>
+</footer>
+
+<script src="i18n.js"></script>
+</body>
+</html>

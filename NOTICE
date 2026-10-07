@@ -1,0 +1,4 @@
+PadBridge PS5 is based on AnyPad-PS5, licensed under the GNU General Public
+License v3.0 or later. Modified by X-F1REBALL-X in October 2026 (renamed,
+Xbox Series X|S over Bluetooth LE verified, rumble test endpoint, tests);
+the changes are listed in CHANGELOG.md from 0.5.6-beta on.
