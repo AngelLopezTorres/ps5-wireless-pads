@@ -105,7 +105,10 @@ for the first moment before the console answers.
 
 - Closing the page leaves PadBridge running.
 - To stop it, press **Stop PadBridge (advanced)** at the bottom of the page twice. Controllers disconnect
-  and Bluetooth is left as it was. Always stop it before loading a new ELF.
+  and Bluetooth is left as it was.
+- Loading a new ELF while PadBridge runs replaces it: the new copy asks the running one to stop
+  (it checks first that the process really is PadBridge), waits up to 5 s for it to clean up, and
+  takes its place. If the old one does not stop in time, the new one says "already running" and exits.
 - Rest mode: PadBridge pauses before the console goes to sleep (controllers disconnect, Bluetooth
   and the menu are released) and resumes by itself a few seconds after waking; paired controllers
   reconnect as after a start. No need to load it again.

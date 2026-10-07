@@ -55,8 +55,8 @@ $(BUILD)/test_vpad: src/ps5_vpad.c src/log.c src/util.c tests/test_vpad.c | $(BU
 $(BUILD)/test_config: src/config.c src/hotkey.c src/netinfo.c src/log.c src/util.c tests/test_config.c | $(BUILD)
 	cc $(HOST_CFLAGS) -o $@ $^
 
-# The instance lock.
-$(BUILD)/test_lock: src/lock.c src/log.c src/util.c tests/test_lock.c | $(BUILD)
+# The instance lock, and taking over from a running copy.
+$(BUILD)/test_lock: src/lock.c src/instance.c src/log.c src/util.c tests/test_lock.c | $(BUILD)
 	cc $(HOST_CFLAGS) -o $@ $^
 
 # Rest mode: when to suspend and when to resume.

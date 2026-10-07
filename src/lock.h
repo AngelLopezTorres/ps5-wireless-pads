@@ -13,6 +13,10 @@
 int  lock_take(const char *path);
 void lock_release(void);
 
+/* The process id holding the lock at `path` if that copy is running (this
+ * boot, process alive, not ourselves); 0 otherwise. */
+long lock_owner(const char *path);
+
 /* The boot time of this machine, in seconds since 1970; 0 if unknown. */
 long lock_boot_time(void);
 

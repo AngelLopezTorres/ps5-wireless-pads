@@ -35,6 +35,7 @@
  */
 #include "hci_usb.h"
 #include "i18n.h"
+#include "instance.h"
 #include "host.h"
 #include "lock.h"
 #include "log.h"
@@ -100,10 +101,53 @@ static int g_bt_after_rest;             /* this round follows rest mode: tries b
 static int g_web_tries;                 /* menu tries left after rest mode */
 static long g_web_next;
 
+/* Only sets the flag: the main loop does the stopping (and so the full
+ * cleanup, which is what lets a newer copy take over after SIGTERM). */
 static void on_signal(int sig)
 {
+    int saved = errno;
+
     (void)sig;
     g_stop = 1;
+    errno = saved;
+}
+
+static void install_signals(void)
+{
+    struct sigaction sa;
+
+    memset(&sa, 0, sizeof sa);
+    sigemptyset(&sa.sa_mask);
+    sa.sa_handler = on_signal;          /* no SA_RESTART: a signal cuts a sleep short */
+    sigaction(SIGTERM, &sa, NULL);
+    sigaction(SIGINT, &sa, NULL);
+    sigaction(SIGHUP, &sa, NULL);
+    sa.sa_handler = SIG_IGN;
+    sigaction(SIGPIPE, &sa, NULL);      /* a browser closing early */
+}
+
+/* The lock is held: if by an older copy that is running, ask it to stop and
+ * take its place. Returns 1 with the lock held. */
+static int take_over(void)
+{
+    static const char *const what[] = {
+        "gone", "not a PadBridge process, left alone", "could not be signalled",
+        "still running after the wait", "stop requested meanwhile",
+    };
+    long old = lock_owner(LOCK_PATH);
+    int r;
+
+    if (old <= 0) return lock_take(LOCK_PATH);          /* released meanwhile */
+    log_line("another instance is running (pid %ld): asking it to stop", old);
+    r = instance_takeover(old, instance_system_ops(&g_stop), INSTANCE_WAIT_MS, INSTANCE_POLL_MS);
+    log_line("previous instance: %s", what[r]);
+    if (r != TAKEOVER_GONE) return 0;
+    if (!lock_take(LOCK_PATH)) {
+        log_line("previous instance gone, but the lock could not be taken");
+        return 0;
+    }
+    log_line("took over from pid %ld", old);
+    return 1;
 }
 
 /* ---- virtual pads follow the controllers ---------------------------------- */
@@ -310,7 +354,8 @@ int main(void)
     (void)g_version_tag;
     (void)g_author_tag;
 
-    if (!lock_take(LOCK_PATH)) {
+    install_signals();                  /* before the takeover: a stop while waiting counts */
+    if (!lock_take(LOCK_PATH) && !take_over()) {
         log_line("another instance is running");
         notify("%s", tr(MSG_ALREADY_RUNNING));
         log_close();
@@ -318,11 +363,6 @@ int main(void)
     }
     unlink(STOP_FLAG);                  /* an old request is not for us */
     syscall(SYS_thr_set_name, -1, "padbridge");    /* how others find us */
-    signal(SIGTERM, on_signal);
-    signal(SIGINT, on_signal);
-    signal(SIGHUP, on_signal);
-    signal(SIGPIPE, SIG_IGN);           /* a browser closing early */
-
 
     /* The menu first: it is what explains everything that follows. */
     memset(&g_wc, 0, sizeof g_wc);

@@ -8,6 +8,7 @@ the start-up notification, on the web page, and in the binary
 ## Unreleased
 
 - Rest mode: PadBridge no longer exits. It pauses on the way to rest (pads, virtual pads, Bluetooth and the menu are released; pairings kept) and, once the console has been awake for 5 s, opens them again with tries that back off (2, 4, 8, 16 s). Stopping (flag, signal) still works while paused.
+- Loading PadBridge while another copy runs now replaces it: the copy holding the lock is confirmed as PadBridge in the process list (sysctl KERN_PROC, thread name `padbridge`), sent SIGTERM, and waited for up to 5 s; no SIGKILL. Signals are installed with sigaction.
 
 ## 0.1.9-beta
 

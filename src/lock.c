@@ -43,8 +43,9 @@ long lock_boot_time(void)
 #endif
 }
 
-/* Is the lock at `path` held by a copy that is really running? */
-static int lock_is_live(const char *path, long boot)
+/* The id of the copy holding the lock at `path`, if it is really running;
+ * else 0. */
+static long lock_is_live(const char *path, long boot)
 {
     char buf[64];
     struct stat st;
@@ -66,7 +67,12 @@ static int lock_is_live(const char *path, long boot)
     } else if (boot && stat(path, &st) == 0 && (long)st.st_mtime < boot) {
         return 0;                       /* an older lock (id only), written before this boot */
     }
-    return kill((pid_t)pid, 0) == 0 || errno == EPERM;
+    return kill((pid_t)pid, 0) == 0 || errno == EPERM ? pid : 0;
+}
+
+long lock_owner(const char *path)
+{
+    return lock_is_live(path, lock_boot_time());
 }
 
 int lock_take(const char *path)
