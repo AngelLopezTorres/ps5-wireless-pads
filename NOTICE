@@ -2,3 +2,10 @@ PadBridge PS5 is based on AnyPad-PS5, licensed under the GNU General Public
 License v3.0 or later. Modified by X-F1REBALL-X in October 2026 (renamed,
 Xbox Series X|S over Bluetooth LE verified, rumble test endpoint, tests);
 the changes are listed in CHANGELOG.md from 0.5.6-beta on.
+
+ps5-wireless-pads is a fork of PadBridge PS5 (commit c0ed576, 0.1.9-beta),
+licensed under the GNU General Public License v3.0 or later. Modified by
+AngelLopezTorres in October 2026: the payload pauses in rest mode and
+resumes after waking instead of exiting, and a newly loaded copy takes over
+from a running instance instead of refusing to start. Rest-mode and takeover
+patterns follow ShadowMountPlus by drakmor (GPL-3.0).
