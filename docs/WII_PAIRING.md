@@ -52,7 +52,7 @@ XInput, which can tell a guitar apart. So every pad that is a guitar is also
 sent, on every change and every 100 ms otherwise, as an XInput guitar (the
 RedOctane X-plorer's identity) to UDP 127.0.0.1. The format is in
 `src/xinput_feed.h`. Nothing listening costs nothing; prospero-win's runtime
-picks it up with `[input] net_xinput`.
+reads it whenever a game's profile has `[input] mode = xinput`.
 
 Tested on PS5 firmware 5.50 with a Wii Remote (RVL-CNT-01) and a Guitar Hero
 World Tour guitar: pairing with red Sync, reconnecting, and a full song in

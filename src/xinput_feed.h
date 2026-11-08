@@ -1,5 +1,5 @@
 /* A guitar's state for a game's XInput, sent to whoever listens on the
- * console itself (prospero-win's runtime: its `[input] net_xinput`).
+ * console itself (prospero-win's runtime, in `[input] mode = xinput`).
  *
  * The virtual DualSense loses what makes a pad an instrument: a Windows
  * game reading XInput sees a gamepad. So for every pad that is a guitar,
