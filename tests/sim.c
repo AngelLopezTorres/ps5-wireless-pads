@@ -26,6 +26,9 @@ typedef struct {
     rc_state st;
     int cfg_in, cfg_out;
     long t_cfg;
+    unsigned char pend_id;          /* a "pending" answer to complete... */
+    long pend_until;                /* ... then, 0: none */
+    int reqs;                       /* connection requests from the host */
 } rchan;
 
 struct sim {
@@ -44,6 +47,27 @@ struct sim {
     long t_report;
     int deaf;
     int ssp, scan;
+    int pin_replies, auth_successes;
+    unsigned char last_pin[23];
+    int name_busy, page_busy, pages;
+    int refused, page_cancels, name_cancels;
+    int names, names_unlinked;      /* name requests; those before a link */
+    int page_timeouts;              /* pages ended with status 0x04 so far */
+    long page_fail_at;              /* when the running page times out, 0: none */
+    unsigned last_page_mode, last_page_offset;
+    int lost_event, enc_requests, refused_chans;
+    unsigned ps_int, ps_win, ps_type;   /* page scan activity and type */
+    int busy_pages;
+    int inquiries, inquiry_cancels;
+    long last_inquiry_at;
+    long enc_at;                    /* encryption comes on then, 0: not starting */
+    queue txq;                      /* the host's ACL data the chip still holds (tx_ms) */
+    long t_tx;                      /* when the chip last sent one */
+    int overflows;
+    int own_lost, own_lost_done;    /* lose_own_req: lost now; happened once */
+    long t_own_lost, repage_at;
+    int host_disconnects;
+    queue held;                     /* the host's ACL data until then */
 };
 
 static long g_clock = 1000;
@@ -81,6 +105,10 @@ static void event(sim_t *s, unsigned char code, const unsigned char *p, int n)
 {
     unsigned char e[260];
 
+    if (s->pad.lose_event && code == s->pad.lose_event && !s->lost_event) {
+        s->lost_event = 1;              /* taken by the system's driver */
+        return;
+    }
     e[0] = code;
     e[1] = (unsigned char)n;
     memcpy(e + 2, p, (size_t)n);
@@ -216,6 +244,13 @@ static void rc_connect(sim_t *s, rchan *c)
 
     c->st = RC_CONNECTING;
     c->cfg_in = c->cfg_out = 0;
+    if (c == &s->ctrl && s->pad.lose_own_req && !s->own_lost_done) {
+        s->own_lost = s->own_lost_done = 1;     /* sent, never arrives */
+        s->t_own_lost = g_clock;
+        c->peer = 0;
+        ++s->sig_id;
+        return;
+    }
     put16(r, c->psm);
     put16(r + 2, c->cid);
     sig(s, 0x02, ++s->sig_id, r, 4);
@@ -232,9 +267,39 @@ static void on_host_signaling(sim_t *s, const unsigned char *d, int n)
     case 0x02:  /* connection request: psm, scid */
         ch = rc_by_psm(s, le16(c));
         if (!ch) break;
+        ch->reqs++;
+        if ((s->pad.refuse_second_req || (s->own_lost && ch == &s->ctrl)) && ch != &s->sdp &&
+            ch->st != RC_CLOSED && ch->peer != le16(c + 2)) {
+            s->refused_chans++;
+            put16(r, 0);
+            put16(r + 2, le16(c + 2));
+            put16(r + 4, 4);            /* no resources available */
+            put16(r + 6, 0);
+            sig(s, 0x03, id, r, 8);
+            break;
+        }
+        /* A repeat of a request it already took, with the same cid. */
+        if (s->pad.ignore_repeat_cid && ch->st != RC_CLOSED && ch->peer == le16(c + 2)) break;
         ch->peer = le16(c + 2);
         ch->st = RC_CONFIG;
         ch->cfg_in = ch->cfg_out = 0;
+        ch->t_cfg = g_clock;
+        if (ch == &s->ctrl && s->pad.lose_first_hid_rsp && ch->reqs == 1) break;  /* answer lost */
+        if (ch == &s->ctrl && s->pad.late_rsp_ms && ch->reqs == 1) {   /* answered late */
+            ch->pend_id = id;
+            ch->pend_until = g_clock + s->pad.late_rsp_ms;
+            break;
+        }
+        if (ch != &s->sdp && s->pad.pending_ms) {
+            put16(r, 0);
+            put16(r + 2, ch->peer);
+            put16(r + 4, 1);            /* pending */
+            put16(r + 6, 0);
+            sig(s, 0x03, id, r, 8);
+            ch->pend_id = id;
+            ch->pend_until = g_clock + s->pad.pending_ms;
+            break;
+        }
         put16(r, ch->cid);
         put16(r + 2, ch->peer);
         put16(r + 4, 0);
@@ -403,6 +468,46 @@ static int op_cmd(void *ctx, unsigned op, const void *params, int plen)
         s->scan = p[0];
         cmd_ok(s, op);
         break;
+    case 0x0C17: {      /* Read Page Timeout: 0x2000 slots, the default */
+        unsigned char r[3] = { 0, 0x00, 0x20 };
+        cmd_complete(s, op, r, 3);
+        break;
+    }
+    case 0x0C1B: {      /* Read Page Scan Activity */
+        unsigned char r[5] = { 0 };
+        put16(r + 1, s->ps_int);
+        put16(r + 3, s->ps_win);
+        cmd_complete(s, op, r, 5);
+        break;
+    }
+    case 0x0402:        /* Inquiry Cancel */
+        s->inquiry_cancels++;
+        cmd_ok(s, op);
+        break;
+    case 0x0C1C:        /* Write Page Scan Activity */
+        s->ps_int = le16(p);
+        s->ps_win = le16(p + 2);
+        cmd_ok(s, op);
+        break;
+    case 0x0C47:        /* Write Page Scan Type */
+        s->ps_type = p[0];
+        cmd_ok(s, op);
+        break;
+    case 0x0C1D: {      /* Read Inquiry Scan Activity: 1.28 s, 11.25 ms */
+        unsigned char r[5] = { 0, 0x00, 0x08, 0x12, 0x00 };
+        cmd_complete(s, op, r, 5);
+        break;
+    }
+    case 0x0C44: {      /* Read Inquiry Mode: extended */
+        unsigned char r[2] = { 0, 2 };
+        cmd_complete(s, op, r, 2);
+        break;
+    }
+    case 0x0C46: {      /* Read Page Scan Type */
+        unsigned char r[2] = { 0, (unsigned char)s->ps_type };
+        cmd_complete(s, op, r, 2);
+        break;
+    }
     case 0x1005: {      /* Read Buffer Size */
         unsigned char r[8] = { 0 };
         put16(r + 1, 1021);
@@ -411,8 +516,30 @@ static int op_cmd(void *ctx, unsigned op, const void *params, int plen)
         cmd_complete(s, op, r, 8);
         break;
     }
+    case 0x1009: {
+        /* Includes a binary zero so PIN tests cannot accidentally use strlen. */
+        unsigned char r[7] = {0, 0x66, 0, 0x44, 0x33, 0x22, 0x11};
+        if (s->pad.no_host_address) memset(r + 1, 0, 6);
+        cmd_complete(s, op, r, sizeof r);
+        break;
+    }
+    case 0x0419: {
+        unsigned char r[255] = {0};
+        const char *name = s->pad.remote_name ? s->pad.remote_name : "Simulated Controller";
+        cmd_status(s, op, 0);
+        s->names++;
+        if (!s->connected) s->names_unlinked++;
+        if (s->pad.no_name_reply) { s->name_busy = 1; break; }
+        r[0] = (unsigned char)s->pad.name_status;
+        memcpy(r + 1, s->pad.addr, 6);
+        strncpy((char *)r + 7, name, sizeof r - 8);
+        event(s, 0x07, r, sizeof r);
+        break;
+    }
     case 0x0401:        /* Inquiry */
         cmd_status(s, op, 0);
+        s->inquiries++;
+        s->last_inquiry_at = g_clock;
         if (s->pad.mode == SIM_WAIT_PAIRING && !s->connected) {
             unsigned char r[255] = { 0 };
             r[0] = 1;
@@ -430,9 +557,69 @@ static int op_cmd(void *ctx, unsigned op, const void *params, int plen)
             cmd_status(s, op, 0x0B);    /* connection already exists */
             break;
         }
+        if (s->name_busy || s->page_busy) {
+            s->refused++;
+            cmd_status(s, op, 0x0C);    /* command disallowed */
+            break;
+        }
         cmd_status(s, op, 0);
-        if (memcmp(p, s->pad.addr, 6) == 0) conn_complete(s);
+        if (memcmp(p, s->pad.addr, 6) != 0) break;
+        s->last_page_mode = p[8];
+        s->last_page_offset = (unsigned)le16(p + 10);
+        if (s->pages++ < s->pad.unanswered_pages) { s->page_busy = 1; break; }
+        if (s->ps_type == 1 || s->ps_win * 4 > s->ps_int) {     /* the radio is scanning half the time */
+            s->busy_pages++;
+            s->page_busy = 1;
+            s->page_fail_at = g_clock + 15000;
+            break;
+        }
+        if (s->page_timeouts < s->pad.page_timeouts) {
+            s->page_timeouts++;
+            s->page_busy = 1;
+            s->page_fail_at = g_clock + 15000;  /* the controller's page timeout */
+            break;
+        }
+        conn_complete(s);
         break;
+    case 0x1405: {      /* Read RSSI */
+        unsigned char r[4] = { 0, p[0], p[1], (unsigned char)-48 };
+        cmd_complete(s, op, r, 4);
+        break;
+    }
+    case 0x0408: {      /* Create Connection Cancel */
+        unsigned char r[7] = { 0 }, c[11] = { 0 };
+        memcpy(r + 1, p, 6);
+        if (!s->page_busy) {
+            r[0] = 0x0B;                /* nothing to cancel */
+            cmd_complete(s, op, r, 7);
+            break;
+        }
+        s->page_busy = 0;
+        s->page_fail_at = 0;
+        s->page_cancels++;
+        cmd_complete(s, op, r, 7);
+        c[0] = 0x02;                    /* the page's end, as cancelled */
+        memcpy(c + 3, p, 6);
+        c[9] = 1;
+        event(s, 0x03, c, 11);
+        break;
+    }
+    case 0x041A: {      /* Remote Name Request Cancel */
+        unsigned char r[7] = { 0 }, n[255] = { 0 };
+        memcpy(r + 1, p, 6);
+        if (!s->name_busy) {
+            r[0] = 0x02;
+            cmd_complete(s, op, r, 7);
+            break;
+        }
+        s->name_busy = 0;
+        s->name_cancels++;
+        cmd_complete(s, op, r, 7);
+        n[0] = 0x02;
+        memcpy(n + 1, p, 6);
+        event(s, 0x07, n, sizeof n);
+        break;
+    }
     case 0x0409:        /* Accept Connection Request */
         cmd_status(s, op, 0);
         conn_complete(s);
@@ -445,8 +632,24 @@ static int op_cmd(void *ctx, unsigned op, const void *params, int plen)
         break;
     case 0x040C:        /* Link Key Negative Reply: pair */
         cmd_ok(s, op);
-        ev_addr(s, 0x31);
+        ev_addr(s, s->pad.legacy_pin ? 0x16 : 0x31);
         break;
+    case 0x040D: {
+        static const unsigned char wii_pin[6] = {0x66, 0, 0x44, 0x33, 0x22, 0x11};
+        int ok = plen == 23 && !memcmp(p, s->pad.addr, 6);
+        s->pin_replies++;
+        if (plen == 23) memcpy(s->last_pin, p, 23);
+        if (s->pad.legacy_pin == 1) ok = ok && p[6] == 6 && !memcmp(p + 7, wii_pin, 6);
+        else ok = ok && p[6] == 4 && !memcmp(p + 7, "0000", 4);
+        {
+            unsigned char r[7] = { 0 };     /* status, address */
+            if (plen >= 6) memcpy(r + 1, p, 6);
+            cmd_complete(s, op, r, 7);
+        }
+        if (ok) { new_key(s); s->auth_successes++; }
+        ev_handle(s, 0x06, ok ? 0 : 5, 0, 0);
+        break;
+    }
     case 0x042B: {      /* IO Capability Reply */
         unsigned char r[10] = { 0 };
         cmd_ok(s, op);
@@ -456,6 +659,7 @@ static int op_cmd(void *ctx, unsigned op, const void *params, int plen)
     }
     case 0x042C:        /* User Confirmation Reply */
         cmd_ok(s, op);
+        s->auth_successes++;
         new_key(s);
         ev_handle(s, 0x06, 0, 0, 0);
         break;
@@ -473,6 +677,16 @@ static int op_cmd(void *ctx, unsigned op, const void *params, int plen)
         }
         break;
     case 0x0413:        /* Set Connection Encryption */
+        s->enc_requests++;
+        if (s->pad.enc_delay_ms && !s->enc) {
+            if (s->enc_at) {
+                cmd_status(s, op, 0x23);    /* LMP error transaction collision */
+                break;
+            }
+            cmd_status(s, op, 0);
+            s->enc_at = g_clock + s->pad.enc_delay_ms;
+            break;
+        }
         cmd_status(s, op, 0);
         s->enc = 1;
         ev_handle(s, 0x08, 0, 1, 1);
@@ -489,6 +703,12 @@ static int op_cmd(void *ctx, unsigned op, const void *params, int plen)
             break;
         }
         cmd_status(s, op, 0);
+        s->host_disconnects++;
+        if (s->own_lost) {
+            sim_disconnect(s);
+            s->repage_at = g_clock + 1600;
+            break;
+        }
         sim_disconnect(s);
         break;
     default:
@@ -498,9 +718,61 @@ static int op_cmd(void *ctx, unsigned op, const void *params, int plen)
     return 1;
 }
 
+/* A Wii Remote's answers: status 0x20 to 0x15, the extension id (0x21) to
+ * a read of 0xA400FA, and the full report once a reporting mode is set. */
+static void wii_answer(sim_t *s, const unsigned char *o, int n)
+{
+    static const unsigned char guitar_id[6] = { 0x00, 0x00, 0xA4, 0x20, 0x01, 0x03 };
+    unsigned char f[23];
+    int ext = s->pad.wii == 1;
+
+    memset(f, 0, sizeof f);
+    f[0] = 0xA1;
+    if (o[0] == 0x15) {
+        f[1] = 0x20;
+        f[4] = ext ? 0x12 : 0x10;       /* LED 1; extension plugged in */
+        f[7] = 0xC0;                    /* battery */
+        acl_to_host(s, s->intr.peer, f, 8);
+    } else if (o[0] == 0x17 && n >= 7 && o[2] == 0xA4 && o[4] == 0xFA) {
+        f[1] = 0x21;
+        f[4] = ext ? 0x50 : 0x57;       /* 6 bytes; or error 7: nothing there */
+        f[5] = 0x00; f[6] = 0xFA;
+        if (ext) memcpy(f + 7, guitar_id, 6);
+        acl_to_host(s, s->intr.peer, f, 23);
+    } else if (o[0] == 0x12 && n >= 3) {
+        s->got_output = 1;
+    }
+}
+
+static int deliver(sim_t *s, const unsigned char *pkt, int len);
+
 static int op_acl_send(void *ctx, const unsigned char *pkt, int len)
 {
     sim_t *s = ctx;
+
+    if (len < 8 || !s->connected) return 1;
+    if (s->pad.tx_ms) {                 /* the chip's buffers */
+        if (s->txq.count + s->held.count >= 8) {
+            unsigned char t = 0x01;     /* ACL */
+            s->overflows++;
+            event(s, 0x1A, &t, 1);
+            return 1;
+        }
+        if (!s->txq.count && !s->held.count) s->t_tx = g_clock;
+    }
+    if (s->enc_at && !s->enc) {         /* held, not reported sent */
+        q_put(&s->held, pkt, len);
+        return 1;
+    }
+    if (s->pad.tx_ms) {
+        q_put(&s->txq, pkt, len);
+        return 1;
+    }
+    return deliver(s, pkt, len);
+}
+
+static int deliver(sim_t *s, const unsigned char *pkt, int len)
+{
     unsigned cid;
     const unsigned char *d;
     int n;
@@ -520,7 +792,8 @@ static int op_acl_send(void *ctx, const unsigned char *pkt, int len)
     else if (cid == RCID_SDP && s->sdp.st == RC_OPEN) on_host_sdp(s, d, n);
     else if (cid == RCID_INTR && n >= 2 && d[0] == 0xA2) {
         s->outputs++;
-        s->got_output = 1;
+        if (s->pad.wii) wii_answer(s, d + 1, n - 1);
+        else s->got_output = 1;
         s->last_out_len = n < (int)sizeof s->last_out ? n : (int)sizeof s->last_out;
         memcpy(s->last_out, d, (size_t)s->last_out_len);
     }
@@ -533,13 +806,33 @@ static void pad_step(sim_t *s)
     rchan *all[3];
     int i;
 
+    if (s->repage_at && g_clock >= s->repage_at && !s->connected) {
+        s->repage_at = 0;
+        sim_power_on(s);
+    }
+    if (s->own_lost && s->connected && g_clock - s->t_own_lost >= 10000) {
+        sim_disconnect(s);                  /* gives up, and tries again */
+        s->repage_at = g_clock + 1600;
+    }
     if (!s->connected || !s->enc) return;
 
     /* L2CAP's retransmission timer: an unanswered request is sent again. */
     all[0] = &s->sdp; all[1] = &s->ctrl; all[2] = &s->intr;
-    for (i = 0; i < 3; i++)
-        if (all[i]->st == RC_CONFIG && !all[i]->cfg_out && g_clock - all[i]->t_cfg >= 1000)
-            rc_send_cfg(s, all[i]);
+    for (i = 0; i < 3; i++) {
+        rchan *ch = all[i];
+        if (ch->pend_until && g_clock >= ch->pend_until) {
+            unsigned char r[8];
+            ch->pend_until = 0;
+            put16(r, ch->cid);
+            put16(r + 2, ch->peer);
+            put16(r + 4, 0);
+            put16(r + 6, 0);
+            sig(s, 0x03, ch->pend_id, r, 8);
+            rc_send_cfg(s, ch);
+        } else if (!ch->pend_until && ch->st == RC_CONFIG && !ch->cfg_out && g_clock - ch->t_cfg >= 1000) {
+            rc_send_cfg(s, ch);
+        }
+    }
 
     if (s->pad.mode == SIM_RECONNECT) {
         if (s->ctrl.st == RC_CLOSED) rc_connect(s, &s->ctrl);
@@ -565,6 +858,32 @@ static int op_pump(void *ctx, int timeout_ms)
 
     g_clock += timeout_ms > 0 ? timeout_ms : 1;
     if (s->deaf) return 0;
+    if (s->page_fail_at && g_clock >= s->page_fail_at) {
+        unsigned char c[11] = { 0x04 };     /* page timeout */
+        s->page_fail_at = 0;
+        s->page_busy = 0;
+        memcpy(c + 3, s->pad.addr, 6);
+        c[9] = 1;
+        event(s, 0x03, c, 11);
+    }
+    if (s->enc_at && g_clock >= s->enc_at) {
+        unsigned char b[PKT];
+        int n;
+        s->enc_at = 0;
+        s->enc = 1;
+        ev_handle(s, 0x08, 0, 1, 1);
+        while ((n = q_get(&s->held, b, (int)sizeof b)) > 0) {
+            if (s->pad.tx_ms) q_put(&s->txq, b, n);
+            else deliver(s, b, n);
+        }
+        s->t_tx = g_clock;
+    }
+    while (s->pad.tx_ms && s->txq.count && g_clock - s->t_tx >= s->pad.tx_ms) {
+        unsigned char b[PKT];
+        int n = q_get(&s->txq, b, (int)sizeof b);
+        s->t_tx += s->pad.tx_ms;
+        deliver(s, b, n);
+    }
     pad_step(s);
     return s->ev.count || s->acl.count;
 }
@@ -619,9 +938,12 @@ sim_t *sim_new(const sim_pad *pad)
 
     s->pad = *pad;
     s->drop_count = pad->seed;
-    s->sdp = (rchan){ 0x01, RCID_SDP, 0, RC_CLOSED, 0, 0, 0 };
-    s->ctrl = (rchan){ 0x11, RCID_CTRL, 0, RC_CLOSED, 0, 0, 0 };
-    s->intr = (rchan){ 0x13, RCID_INTR, 0, RC_CLOSED, 0, 0, 0 };
+    s->sdp = (rchan){ .psm = 0x01, .cid = RCID_SDP, .st = RC_CLOSED };
+    s->ctrl = (rchan){ .psm = 0x11, .cid = RCID_CTRL, .st = RC_CLOSED };
+    s->intr = (rchan){ .psm = 0x13, .cid = RCID_INTR, .st = RC_CLOSED };
+    s->ps_int = pad->busy_page_scan ? 0x029B : 0x0800;
+    s->ps_win = pad->busy_page_scan ? 0x014D : 0x0012;
+    s->ps_type = pad->busy_page_scan ? 1 : 0;
     ph_clock_hook = sim_now;
     return s;
 }
@@ -656,6 +978,10 @@ void sim_disconnect(sim_t *s)
     p[3] = 0x13;
     event(s, 0x05, p, 4);
     s->connected = s->enc = s->got_output = 0;
+    s->enc_at = 0;
+    s->held.count = 0;
+    s->txq.count = 0;
+    s->own_lost = 0;
     s->sdp.st = s->ctrl.st = s->intr.st = RC_CLOSED;
 }
 
@@ -695,4 +1021,36 @@ int sim_last_output(const sim_t *s, unsigned char *out, int max)
     int n = s->last_out_len < max ? s->last_out_len : max;
     memcpy(out, s->last_out, (size_t)n);
     return n;
+}
+
+int sim_pin_replies(const sim_t *s, unsigned char out[23])
+{
+    if (out) memcpy(out, s->last_pin, 23);
+    return s->pin_replies;
+}
+int sim_auth_successes(const sim_t *s) { return s->auth_successes; }
+int sim_refused(const sim_t *s) { return s->refused; }
+int sim_page_cancels(const sim_t *s) { return s->page_cancels; }
+int sim_name_cancels(const sim_t *s) { return s->name_cancels; }
+int sim_names(const sim_t *s) { return s->names; }
+int sim_names_unlinked(const sim_t *s) { return s->names_unlinked; }
+int sim_pages(const sim_t *s) { return s->pages; }
+int sim_enc_requests(const sim_t *s) { return s->enc_requests; }
+int sim_refused_chans(const sim_t *s) { return s->refused_chans; }
+int sim_ctrl_reqs(const sim_t *s) { return s->ctrl.reqs; }
+void sim_page_scan(const sim_t *s, unsigned *interval, unsigned *window, unsigned *type)
+{
+    *interval = s->ps_int; *window = s->ps_win; *type = s->ps_type;
+}
+int sim_busy_pages(const sim_t *s) { return s->busy_pages; }
+int sim_inquiries(const sim_t *s) { return s->inquiries; }
+int sim_inquiry_cancels(const sim_t *s) { return s->inquiry_cancels; }
+long sim_last_inquiry_at(const sim_t *s) { return s->last_inquiry_at; }
+void sim_set_mode(sim_t *s, sim_mode mode) { s->pad.mode = mode; }
+int sim_overflows(const sim_t *s) { return s->overflows; }
+int sim_host_disconnects(const sim_t *s) { return s->host_disconnects; }
+void sim_last_page(const sim_t *s, unsigned *mode, unsigned *offset)
+{
+    *mode = s->last_page_mode;
+    *offset = s->last_page_offset;
 }

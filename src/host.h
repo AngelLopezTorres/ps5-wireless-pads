@@ -49,6 +49,10 @@ int  host_pair(host_t *h, int seconds);
  * connected or takes no output. */
 int  host_set_output(host_t *h, int slot, const pad_output *out);
 
+/* Sets the player number (1..4) a pad shows in its lights, the rest of its
+ * output as it is. Returns 0 if the slot has no ready pad. */
+int  host_set_player(host_t *h, int slot, int player);
+
 /* Rumbles the pad in `slot` for `ms` (100..2000) and stops it: a test from
  * the web page. Lights are left as they are. Returns 0 if the slot has no
  * connected pad or the pad takes no output. */

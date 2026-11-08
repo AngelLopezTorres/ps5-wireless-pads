@@ -97,6 +97,7 @@ int sceKernelSendNotificationRequest(int, notify_request *, size_t, int);
 
 #define T_IDENTIFY      3000    /* AddDevice to its DEVICE_ADDED line */
 #define T_AMBIGUITY      300    /* after a match, watch for a second one */
+#define T_WATCH       120000    /* the kernel log is followed this long after a bind or a PS press */
 #define LINE_MAX_LEN    1024
 
 enum { VP_FREE, VP_QUEUED, VP_PENDING, VP_READY, VP_FAILED };
@@ -109,6 +110,7 @@ typedef struct {
     pad_state last;             /* the pad's latest state, resent while PS is held from the menu */
     long ps_until;              /* ms; PS is added to the frames until then (0: not held) */
     int ps_active;              /* a frame with PS went out and the release is still to be sent */
+    int player;                 /* the user's signed-in position + 1, 0: not known */
 } vslot;
 
 static mbus_bind_fn g_bind;
@@ -126,6 +128,12 @@ static uint64_t g_match_dev;
 static int g_log_fd = -1, g_log_is_dev;
 static char g_line[LINE_MAX_LEN];
 static size_t g_line_len;
+
+/* After a bind, and after PS is pressed on a pad, the kernel log is followed
+ * for T_WATCH: which user the console gives each controller to, and users
+ * signing in and out, go into PadBridge PS5's log. */
+static long g_watch_until;
+static int g_discard;                   /* reading what came before: not logged */
 
 /* Raw sensor counts to physical units, uncalibrated: Sony pads report
  * 8192 counts per g and 1024 per degree per second. */
@@ -206,19 +214,107 @@ static uint64_t hex_after(const char *s, const char *key)
     return v;
 }
 
-/* A virtual DualSense appearing:
+/* A DualSense appearing, in either wording seen:
  *   SCE_MBUS_EVENT_DEVICE_ADDED [DeviceId:0x...][type:1][subType:22]
  *   [capabilityBattery:0]...
- * A real pad reports a battery, so a line saying otherwise is not ours. */
-static uint64_t virtual_device_in(const char *line)
+ * where a real pad reports a battery, so a line saying otherwise is not
+ * ours; and, on firmware 5.50, with no battery to tell them apart:
+ *   [Umm] processMbusEvent() event=DEVICE_ADDED deviceId=0x... deviceType=22 userId=0x0(0)
+ * Either way only one such line between AddDevice and a few seconds later
+ * is taken as ours. */
+uint64_t vpad_device_in_line(const char *line)
 {
     const char *bat;
 
+    if (strstr(line, "event=DEVICE_ADDED") && strstr(line, "deviceType=22 "))
+        return hex_after(line, "deviceId");
     if (!strstr(line, "DEVICE_ADDED") || !strstr(line, "type:1") || !strstr(line, "subType:22"))
         return 0;
     bat = strstr(line, "capabilityBattery:");
     if (bat && bat[18] != '0') return 0;
     return hex_after(line, "DeviceId");
+}
+
+/* A controller handed to a user, in either wording seen:
+ *   [Umm] processMbusEvent() event=DEVICE_OWNER_CHANGED deviceId=0x... deviceType=22 userId=0x...(...)
+ *   #LOGIN MGR# Receive Event : SCE_MBUS_EVENT_DEVICE_OWNER_CHANGED [DeviceId:0x...][UserId:0x...]
+ * 1 with the device and the user (0 or 0xff: nobody), else 0. */
+int vpad_owner_in_line(const char *line, uint64_t *dev, int32_t *user)
+{
+    if (strstr(line, "event=DEVICE_OWNER_CHANGED") && strstr(line, "userId=")) {
+        *dev = hex_after(line, "deviceId");
+        *user = (int32_t)hex_after(line, "userId");
+        return *dev != 0;
+    }
+    if (strstr(line, "SCE_MBUS_EVENT_DEVICE_OWNER_CHANGED") && strstr(line, "[UserId:")) {
+        *dev = hex_after(line, "[DeviceId");
+        *user = (int32_t)hex_after(line, "[UserId");
+        return *dev != 0;
+    }
+    return 0;
+}
+
+/* The kernel log lines about controllers and users, kept while watching. */
+int vpad_klog_of_interest(const char *line)
+{
+    return strstr(line, "[Umm]") || strstr(line, "#LOGIN MGR#") || strstr(line, "UserService") ||
+           strstr(line, "PlayerColor") || strstr(line, "UserColor") || strstr(line, "UserNumber");
+}
+
+/* ---- users ------------------------------------------------------------------------
+ *
+ * A user as the log names one: with the position in the console's list of
+ * signed-in users (0 to 3), to set beside the number the console shows for
+ * each controller. sceUserServiceGetUserColor is not used: on firmware 5.50
+ * wii-pin14 stopped dead at its first call. */
+int vpad_position_in(const int32_t login[4], int32_t user)
+{
+    int i;
+
+    if (user == 0 || user == 0xFF || user == -1) return -1;
+    for (i = 0; i < 4; i++) if (login[i] == user) return i;
+    return -1;
+}
+
+/* The user's signed-in position, 0 to 3, or -1. */
+static int position_of(int32_t user)
+{
+    int32_t login[4] = { -1, -1, -1, -1 };
+
+    if (sceUserServiceGetLoginUserIdList(login) != 0) return -1;
+    return vpad_position_in(login, user);
+}
+
+static void describe_user(int32_t user, char *out, size_t n)
+{
+    int p;
+
+    if (user == 0 || user == 0xFF || user == -1) {
+        snprintf(out, n, "%#x (nobody)", (unsigned)user);
+        return;
+    }
+    p = position_of(user);
+    if (p >= 0) snprintf(out, n, "%#x (signed-in position %d)", (unsigned)user, p);
+    else snprintf(out, n, "%#x (not signed in)", (unsigned)user);
+}
+
+/* Who the console gave a controller to, from a kernel log line. */
+static void note_owner(const char *line)
+{
+    uint64_t dev;
+    int32_t user;
+    char d[96];
+    int i;
+
+    if (!vpad_owner_in_line(line, &dev, &user)) return;
+    describe_user(user, d, sizeof d);
+    for (i = 0; i < HOST_MAX_PADS; i++)
+        if (g_slot[i].st == VP_READY && g_slot[i].dev == dev) {
+            log_line("slot %d: the console gives device %#llx to user %s", i, (unsigned long long)dev, d);
+            g_slot[i].player = position_of(user) + 1;
+            return;
+        }
+    log_line("vpad: the console gives device %#llx (not PadBridge's) to user %s", (unsigned long long)dev, d);
 }
 
 /* Reads what the log has, a bounded amount per call. */
@@ -239,7 +335,9 @@ static void log_source_read(void)
             g_line[g_line_len] = '\0';
             g_line_len = 0;
             if (g_log_is_dev) log_line("klog: %s", g_line);  /* kept, not lost */
-            dev = virtual_device_in(g_line);
+            else if (!g_discard && vpad_klog_of_interest(g_line)) log_line("klog: %s", g_line);
+            if (!g_discard) note_owner(g_line);
+            dev = vpad_device_in_line(g_line);
             if (!dev || g_pending < 0) continue;
             if (g_matches == 0) {
                 g_match_dev = dev;
@@ -248,6 +346,28 @@ static void log_source_read(void)
             if (g_matches == 0 || dev != g_match_dev) g_matches++;
         }
     }
+}
+
+/* Reads and drops what the log held before it was opened: not ours. */
+static void log_source_drain(void)
+{
+    g_discard = 1;
+    log_source_read();
+    g_discard = 0;
+}
+
+/* Follows the kernel log until T_WATCH from now. */
+static void watch_start(long now, const char *why)
+{
+    if (g_log_fd < 0) {
+        g_log_fd = log_source_open();
+        if (g_log_fd < 0) return;
+        log_source_drain();
+    }
+    if (g_watch_until <= now)
+        log_line("vpad: following the kernel log for %d s (%s)%s", T_WATCH / 1000, why,
+                 g_log_is_dev ? ", every line copied" : ", controller and user lines");
+    g_watch_until = now + T_WATCH;
 }
 
 /* ---- users and privileges ---------------------------------------------------- */
@@ -448,12 +568,16 @@ static void start_identification(int slot)
         g_slot[slot].st = VP_FAILED;
         return;
     }
-    g_log_fd = log_source_open();
     if (g_log_fd < 0) {
-        g_slot[slot].st = VP_FAILED;
-        return;
+        g_log_fd = log_source_open();
+        if (g_log_fd < 0) {
+            g_slot[slot].st = VP_FAILED;
+            return;
+        }
+        log_source_drain();             /* what came before is not ours */
+    } else {
+        log_source_read();              /* followed already: up to now */
     }
-    log_source_read();                  /* what came before is not ours */
     g_matches = 0;
     g_match_dev = 0;
 
@@ -480,8 +604,7 @@ static void finish_identification(long now)
     if (g_matches == 0 && now - g_t_add < T_IDENTIFY) return;
     if (g_matches == 1 && now - g_t_match < T_AMBIGUITY && now - g_t_add < T_IDENTIFY) return;
 
-    g_pending = -1;
-    log_source_close();
+    g_pending = -1;                     /* the log is closed by vpad_poll, after any watch */
     if (g_matches != 1) {
         /* Unknown or ambiguous: nothing is bound, inserted into or deleted. */
         log_line("slot %d: virtual pad not identified (%d candidates), left alone", slot, g_matches);
@@ -506,6 +629,13 @@ static void finish_identification(long now)
         return;
     }
     v->st = VP_READY;
+    {
+        char d[96];
+        describe_user(g_user, d, sizeof d);
+        log_line("slot %d: its user is %s", slot, d);
+        v->player = position_of(g_user) + 1;
+    }
+    watch_start(now, "a virtual pad was bound");
 }
 
 void vpad_poll(long now)
@@ -519,11 +649,24 @@ void vpad_poll(long now)
         finish_identification(now);
         return;
     }
+    if (g_log_fd >= 0) {
+        log_source_read();
+        if (now >= g_watch_until) {
+            log_source_close();
+            if (g_watch_until) log_line("vpad: stopped following the kernel log");
+            g_watch_until = 0;
+        }
+    }
     for (i = 0; i < HOST_MAX_PADS; i++)
         if (g_slot[i].st == VP_QUEUED) {
             start_identification(i);
             return;
         }
+}
+
+int vpad_player(int slot)
+{
+    return slot >= 0 && slot < HOST_MAX_PADS && g_slot[slot].st == VP_READY ? g_slot[slot].player : 0;
 }
 
 int vpad_live(int slot)
@@ -581,7 +724,14 @@ static void send_frame(int slot, const pad_state *st)
 
 void vpad_update(int slot, const pad_state *st)
 {
+    uint32_t ps;
+
     if (!vpad_live(slot)) return;
+    ps = st->buttons & PAD_PS;
+    if (ps != (g_slot[slot].last.buttons & PAD_PS)) {
+        log_line("slot %d: PS %s on the pad", slot, ps ? "pressed" : "released");
+        if (ps) watch_start(now_ms(), "PS pressed on a pad");
+    }
     g_slot[slot].last = *st;
     send_frame(slot, st);
 }

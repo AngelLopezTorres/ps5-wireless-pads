@@ -54,6 +54,23 @@ static void test_descriptor(void)
         CHECK(f[1].ep_events == 0x8C && f[1].ep_acl_in == 0x8D && f[1].ep_acl_out == 0x0B);
     }
 
+    printf("ACL goes out on 0x02 on the PS5's MediaTek chip, without a fallback to 0x01\n");
+    if (n == 2) {
+        uint8_t spare = 0xFF, out;
+        hci_function g;
+
+        out = usb_acl_out_endpoint(0x0E8D, 0x3603, &f[0], &spare);
+        CHECK(out == 0x02 && spare == 0);
+        out = usb_acl_out_endpoint(0x1234, 0x5678, &f[0], &spare);     /* any other chip: as before */
+        CHECK(out == 0x01 && spare == 0x02);
+        out = usb_acl_out_endpoint(0x0E8D, 0x3603, &f[1], &spare);     /* function B pairs 0x8d, not 0x82 */
+        CHECK(out == 0x0B && spare == 0x0D);
+        g = f[0];
+        g.n_other = 0;                                                  /* no second OUT: the first */
+        out = usb_acl_out_endpoint(0x0E8D, 0x3603, &g, &spare);
+        CHECK(out == 0x01 && spare == 0);
+    }
+
     printf("a truncated or malformed descriptor never reads past its end\n");
     for (i = 0; i <= len; i += 7) usb_find_hci_functions(cfg, i, f);
     cfg[30] = 0;                                    /* a zero-length descriptor: stop */

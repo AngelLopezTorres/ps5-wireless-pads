@@ -15,12 +15,16 @@
 #define OP_INQUIRY_CANCEL       0x0402
 #define OP_CREATE_CONNECTION    0x0405
 #define OP_DISCONNECT           0x0406
+#define OP_CREATE_CONN_CANCEL   0x0408
 #define OP_ACCEPT_CONNECTION    0x0409
 #define OP_REJECT_CONNECTION    0x040A
 #define OP_LINK_KEY_REPLY       0x040B
 #define OP_LINK_KEY_NEG_REPLY   0x040C
 #define OP_PIN_CODE_REPLY       0x040D
+#define OP_READ_RSSI            0x1405
 #define OP_AUTH_REQUESTED       0x0411
+#define OP_REMOTE_NAME_REQ      0x0419
+#define OP_REMOTE_NAME_CANCEL   0x041A
 #define OP_SET_ENCRYPTION       0x0413
 #define OP_IO_CAP_REPLY         0x042B
 #define OP_USER_CONFIRM_REPLY   0x042C
@@ -34,6 +38,13 @@
 #define OP_READ_BD_ADDR         0x1009
 #define OP_READ_SCAN_ENABLE     0x0C19
 #define OP_READ_SSP_MODE        0x0C55
+#define OP_READ_PAGE_TIMEOUT    0x0C17
+#define OP_READ_PAGE_SCAN_ACT   0x0C1B
+#define OP_READ_INQ_SCAN_ACT    0x0C1D
+#define OP_READ_INQUIRY_MODE    0x0C44
+#define OP_READ_PAGE_SCAN_TYPE  0x0C46
+#define OP_WRITE_PAGE_SCAN_ACT  0x0C1C
+#define OP_WRITE_PAGE_SCAN_TYPE 0x0C47
 
 #define CID_SIGNALING   0x0001
 #define PSM_SDP         0x0001
@@ -70,8 +81,34 @@
 #define T_SELF_CHANNELS 1200    /* ... and open its own HID channels */
 #define T_INTR_AFTER     500    /* interrupt channel after control */
 #define T_CONN_TIMEOUT 20000    /* paging a pad */
+#define PAGE_RETRIES       2    /* a page timed out while pairing: page again at once */
+#define T_RSSI          3000    /* the link's RSSI is logged this often until ready */
+#define RSSI_NONE       0x7F    /* an inquiry result without RSSI (127: not available) */
+/* A pad being paired is asked its name over the new link before it is
+ * authenticated. Past this, cancel the request and authenticate once the
+ * controller confirms, or after the wait, with the existing PIN policy. */
+#define T_NAME_TIMEOUT 3000
+#define T_NAME_CANCEL_WAIT 1000
+#define NAME_TRIES         2    /* name requests before the existing PIN policy */
+#define T_ENC_RETRY     2000    /* no Encryption Change yet: ask again */
+#define T_AUTH_AFTER_KEY 500    /* a key stored but no Authentication Complete */
+#define ENC_TRIES          5
 #define T_SETUP_TIMEOUT 30000   /* connection to ready */
 #define T_CHAN_CONNECT  2500
+#define T_CHAN_PENDING 10000    /* after a "pending" connection response */
+/* The chip holds a link's data while encryption starts: a channel request
+ * sent meanwhile is counted from when encryption is on, this long at most. */
+#define T_CHAN_HELD    10000
+#define T_CHAN_REFUSED  1000    /* a refused channel is asked again after this */
+#define T_CHIP_STATS    5000    /* the chip's traffic is summed up this often while pairing */
+#define CHIP_CMDS         24    /* distinct opcodes counted per summary */
+#define OTHER_LOG_MAX     64    /* lines about the system's own connections, per run */
+/* Page scan while a pad is paged and set up for pairing: the default,
+ * 11.25 ms every 1.28 s, standard. The system's own (208 ms every 417 ms,
+ * interlaced, on the PS5) leaves paging half the radio's time. */
+#define PS_LOW_INTERVAL 0x0800
+#define PS_LOW_WINDOW   0x0012
+#define RX_LOG_MAX        24    /* inbound frames logged per link before ready */
 #define T_CFG_RESEND    1200
 #define CFG_TRIES          6
 #define T_CFG_TIMEOUT   4000    /* the pad's own request may have been lost */
@@ -92,6 +129,10 @@
  * after INFLIGHT_MS is taken as sent. */
 #define INFLIGHT_MAX      64
 #define INFLIGHT_MS       60
+/* After the chip reports a Data Buffer Overflow, packets went out slower
+ * than that (a Wii Remote's link, with page scan busy): from then on a
+ * buffer is only taken as free after this long without a report. */
+#define INFLIGHT_SLOW_MS 1000
 
 #define DB_MAX            16
 #define DB_REC            64    /* one record in the store file */
@@ -107,7 +148,13 @@ typedef struct {
     int cfg_ours_ok;        /* the pad accepted our configuration */
     int cfg_theirs_ok;      /* we accepted the pad's */
     int cfg_tries;
+    int pending;            /* the pad answered "pending": wait longer */
     long t_state, t_cfg;
+    long t_req;             /* when this connection request was first sent */
+    long t_retry;           /* refused: not asked again before this */
+    unsigned old_scid;      /* the cid of a request given up on, 0: none */
+    int held_logged;        /* "waiting for encryption" logged */
+    int refusals;           /* our requests the pad refused on this link */
 } chan;
 
 /* A paired pad. Classic pads keep a link key; LE pads a long-term key
@@ -125,6 +172,8 @@ typedef struct {
     int credits, max;
     long inflight[INFLIGHT_MAX];
     int head, count;
+    int expire_ms;                  /* 0: INFLIGHT_MS */
+    int overflows;
 } acl_pool;
 
 #define LE_MAX_CHARS 24
@@ -181,10 +230,19 @@ typedef struct {
     int connected;          /* the ACL link is up */
     unsigned handle;
     int pairing;            /* we found it in pairing mode */
+    int pad_asked;          /* the pad asked for a channel itself on this link */
     long t_create, t_conn;
 
+    int name_pending, name_cancelled, wii_remote;
+    long t_name;
+    int paging, page_started;       /* Create Connection sent; and accepted */
+    int page_tries;                 /* immediate retries after a page timeout */
+    unsigned page_mode, page_offset;    /* the inquiry's settings, while a retry uses others */
+    long t_rssi;
+    unsigned char create_params[13];
     int auth_sent, auth_ok, enc_sent, enc_on;
-    long t_auth_ok, t_secure;
+    int enc_tries, enc_logged, name_tries;
+    long t_auth_ok, t_secure, t_enc;
 
     int ids_known;
     uint16_t vid, pid;
@@ -201,6 +259,12 @@ typedef struct {
 
     chan sdp, ctrl, intr;
     int ready, disconnecting;
+
+    /* ACL packets we sent, the controller reported sent (Number Of
+     * Completed Packets), and the pad sent us; inbound frames logged
+     * before ready. For telling a silent pad from answers lost to the
+     * system's driver. */
+    int n_tx, n_tx_done, n_rx, n_rx_logged;
 
     unsigned char rx[1024];
     int rx_len, rx_need;
@@ -263,6 +327,20 @@ struct host {
     int scan_orig, scan_set; /* page scan as found, and as we set it (-1: untouched) */
     long last_rx, probe_at; /* liveness: anything heard, last probe */
     int probes;
+
+    /* What PadBridge sees of the chip's traffic, its own and the system's,
+     * summed up every T_CHIP_STATS while pairing or linking. */
+    struct {
+        long t0;
+        int ev[256];
+        int acl_ours, acl_other;
+        struct { unsigned op; int sent, answered; } cmd[CHIP_CMDS];
+        int n_cmd;
+    } st;
+    int other_logged;               /* lines about others' connections */
+    int setting[6];                 /* chip settings last logged, -1: none yet */
+    int ps_act0, ps_type0;          /* page scan as found at setup, -1: unknown */
+    int ps_low;                     /* turned down by us, to put back */
 };
 
 
