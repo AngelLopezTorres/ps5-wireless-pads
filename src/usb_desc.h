@@ -29,4 +29,14 @@ typedef struct {
  * many were found (at most HCI_FUNCTIONS_MAX). */
 int usb_find_hci_functions(const uint8_t *cfg, int len, hci_function *out);
 
+/* The bulk OUT endpoint to write ACL data to for a function found above, and
+ * in *spare the one to try if a write there never finishes (0: none). The
+ * rule is the first bulk OUT in descriptor order, except on the PS5's
+ * MediaTek chip (0e8d:3603): its first function lists 0x01 before 0x02, but
+ * the chip drains only 0x02, the OUT paired with its bulk IN 0x82. 0x01 takes
+ * one packet and then refuses every other one, so a Classic link stalled
+ * after its first L2CAP request. ps5-linux sends ACL on 0x02 on the same chip.
+ * 0x01 is no spare there: falling back to it could only stall again. */
+uint8_t usb_acl_out_endpoint(uint16_t vid, uint16_t pid, const hci_function *f, uint8_t *spare);
+
 #endif

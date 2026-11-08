@@ -21,6 +21,9 @@
 #define PARSE_NONE  0       /* not a report this profile reads */
 #define PARSE_OK    1
 #define PARSE_FULL  2       /* the full report the init sequence asks for */
+#define PARSE_RESTART 3     /* the pad dropped its setup (a Wii Remote's
+                               extension came or went): send the wake-up
+                               sequence again */
 
 typedef struct pad_profile {
     const char *name;

@@ -9,6 +9,8 @@
  *      MBus device. Its return value is a status, not a handle.
  *   3. The kernel log announces the device:
  *        SCE_MBUS_EVENT_DEVICE_ADDED [DeviceId:0x...][type:1][subType:22]...
+ *      or, on firmware 5.50:
+ *        [Umm] processMbusEvent() event=DEVICE_ADDED deviceId=0x... deviceType=22 ...
  *   4. sceMbusBindDeviceWithUserId(DeviceId, user) gives it to the user.
  *   5. scePadVirtualDeviceInsertData(DeviceId & 0xffffffff, &ScePadData)
  *      feeds it.
@@ -58,5 +60,23 @@ void notify(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 /* Which signed-in user gets the pads (see ps5_vpad.c); `want` is NULL, "other"
  * or a hexadecimal user id. -1 if nobody is signed in. */
 int32_t vpad_choose_user(const int32_t login[4], int32_t init, int32_t fore, const char *want);
+
+/* The DeviceId a kernel log line announces a virtual DualSense with, or 0. */
+uint64_t vpad_device_in_line(const char *line);
+
+/* A kernel log line handing a controller to a user: 1 with both, else 0. */
+int vpad_owner_in_line(const char *line, uint64_t *dev, int32_t *user);
+
+/* A kernel log line about controllers or users, kept while following it. */
+int vpad_klog_of_interest(const char *line);
+
+/* A user's position in the list of signed-in users, 0 to 3; -1 for nobody
+ * or a user not in it. */
+int vpad_position_in(const int32_t login[4], int32_t user);
+
+/* The player number a slot's pad should show: its user's signed-in position
+ * + 1, as the console gave it (at the bind, or later when another user
+ * takes it). 0: not known, or no live virtual pad. */
+int vpad_player(int slot);
 
 #endif

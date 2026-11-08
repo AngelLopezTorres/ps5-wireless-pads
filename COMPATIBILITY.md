@@ -7,9 +7,9 @@ Every controller below has its own entry in the code, listed one by one.
 | ✅ | **Verified** on a real PS5 by a person |
 | 🧪 | **Supported, not yet tested**: you can use this controller on the PS5; the support is written and passes the simulator tests, but nobody has tried it on a console yet |
 
-**Today: 3 verified controllers, 60 more supported ids, plus the generic profile for any other Bluetooth HID gamepad.**
+**Today: 4 verified controllers, 60 more supported ids, plus the generic profile for any other Bluetooth HID gamepad.**
 
-DualShock 4 v2, DualShock 4 v1 and Xbox Series X|S (Bluetooth LE) verified on PS5 firmware 10.20.
+DualShock 4 v2, DualShock 4 v1 and Xbox Series X|S (Bluetooth LE) verified on PS5 firmware 10.20. Wii Remote with a Guitar Hero guitar verified on PS5 firmware 5.50.
 
 ## Sony DualShock 4 family
 
@@ -58,6 +58,16 @@ Bluetooth LE models need Secure Connections pairing; whether the PS5's chip supp
 | `057e:201e` | Nintendo Switch Online Mega Drive / Genesis controller (2nd id) | 🧪 |
 
 Rumble is not done yet for these.
+
+## Nintendo Wii
+
+Pair with the red Sync button; see [docs/WII_PAIRING.md](docs/WII_PAIRING.md).
+
+| USB id | Controller | Status |
+|---|---|---|
+| `057e:0306` | Wii Remote (RVL-CNT-01) with a Guitar Hero guitar (World Tour) | ✅ Verified (PS5 FW 5.50) |
+| `057e:0306` | Wii Remote (RVL-CNT-01) alone | 🧪 |
+| `057e:0330` | Wii Remote Plus (RVL-CNT-01-TR) | 🧪 |
 
 ## Third-party pads with a built-in mapping
 
@@ -112,7 +122,7 @@ The generic profile reads the pad's HID descriptor and applies a default mapping
 
 ## Not supported yet
 
-DualShock 3, Wii Remote / Wii U Pro, Joy-Con used alone.
+DualShock 3, Wii U Pro, Joy-Con used alone, Wii Remote extensions other than the guitar (Nunchuk, Classic Controller, drums), and guitar tilt.
 
 ## Help us verify
 

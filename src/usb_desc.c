@@ -59,3 +59,21 @@ int usb_find_hci_functions(const uint8_t *cfg, int len, hci_function *out)
         return k;
     }
 }
+
+uint8_t usb_acl_out_endpoint(uint16_t vid, uint16_t pid, const hci_function *f, uint8_t *spare)
+{
+    uint8_t second = 0;
+    int i;
+
+    for (i = 0; i < f->n_other; i++)
+        if (!(f->other[i] & 0x80)) {
+            second = f->other[i];
+            break;
+        }
+    if (vid == 0x0E8D && pid == 0x3603 && f->ep_acl_in == 0x82 && second == 0x02) {
+        *spare = 0;
+        return 0x02;
+    }
+    *spare = second;
+    return f->ep_acl_out;
+}

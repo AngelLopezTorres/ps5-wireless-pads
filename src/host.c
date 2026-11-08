@@ -27,8 +27,26 @@ const char *addr_str(const unsigned char *a)
     return s;
 }
 
+/* Counts a command sent (ours) or answered (anyone's) for the summary. */
+static void stats_cmd(host_t *h, unsigned op, int sent)
+{
+    int i;
+
+    if (!op) return;                    /* a credits-only Command Complete */
+    for (i = 0; i < h->st.n_cmd && h->st.cmd[i].op != op; i++) {}
+    if (i == h->st.n_cmd) {
+        if (i == CHIP_CMDS) return;
+        h->st.cmd[i].op = op;
+        h->st.cmd[i].sent = h->st.cmd[i].answered = 0;
+        h->st.n_cmd++;
+    }
+    if (sent) h->st.cmd[i].sent++;
+    else h->st.cmd[i].answered++;
+}
+
 int send_cmd(host_t *h, unsigned op, const void *p, int len)
 {
+    stats_cmd(h, op, 1);
     return h->hci.ops->cmd(h->hci.ctx, op, p, len);
 }
 
@@ -93,9 +111,20 @@ void link_disconnect(host_t *h, link_t *l, const char *why)
     unsigned char p[3];
 
     if (!l->connected) {
-        log_line("pad %s: dropped (%s)", addr_str(l->addr), why);
+        unsigned char a[6];
+        int paging = !l->le && l->paging;
+
+        memcpy(a, l->addr, 6);
+        log_line("pad %s: dropped (%s)", addr_str(a), why);
         if (l->le) le_abandon(h, l);
         link_free(h, l);
+        /* The controller goes on paging until told otherwise, and meanwhile
+         * refuses the next Create Connection with "command disallowed".
+         * Freed first: a reply names no link now. */
+        if (paging) {
+            log_line("pad %s: cancelling the page", addr_str(a));
+            send_cmd(h, OP_CREATE_CONN_CANCEL, a, 6);
+        }
         return;
     }
     if (l->disconnecting) return;
@@ -222,7 +251,7 @@ static void pool_expire(acl_pool *p)
 {
     long now = now_ms();
 
-    while (p->count && now - p->inflight[p->head] > INFLIGHT_MS) {
+    while (p->count && now - p->inflight[p->head] > (p->expire_ms ? p->expire_ms : INFLIGHT_MS)) {
         p->head = (p->head + 1) % INFLIGHT_MAX;
         p->count--;
         if (p->credits < p->max) p->credits++;
@@ -273,6 +302,7 @@ int l2_send(host_t *h, link_t *l, unsigned cid, const unsigned char *d, int len)
     memcpy(pkt + 8, d, (size_t)len);
     if (!h->hci.ops->acl_send(h->hci.ctx, pkt, 8 + len)) return 0;
 
+    l->n_tx++;
     pool->credits--;
     if (pool->count == INFLIGHT_MAX) {
         pool->head = (pool->head + 1) % INFLIGHT_MAX;
@@ -323,6 +353,7 @@ static void chan_set(chan *c, chan_state st)
 {
     c->st = st;
     c->t_state = now_ms();
+    c->pending = 0;
     if (st != CH_OPEN) c->cfg_ours_ok = c->cfg_theirs_ok = 0;
     if (st == CH_CONFIG) c->cfg_tries = 0;
 }
@@ -351,6 +382,8 @@ static void chan_connect(host_t *h, link_t *l, chan *c)
     unsigned char r[4];
 
     chan_set(c, CH_CONNECTING);
+    c->t_req = now_ms();
+    c->held_logged = 0;
     put16(r, c->psm);
     put16(r + 2, c->scid);
     sig_send(h, l, SIG_CONN_REQ, next_sig_id(h), r, 4);
@@ -378,9 +411,26 @@ static void chan_lost(host_t *h, link_t *l, chan *c)
 
 static void chan_tick(host_t *h, link_t *l, chan *c, long now)
 {
-    if (c->st == CH_CONNECTING && now - c->t_state > T_CHAN_CONNECT) {
-        log_line("pad %s: channel %#x: no connection response", addr_str(l->addr), c->psm);
+    /* Encryption being started: the chip sends nothing on the link until
+     * it is on, so the request has not gone out yet. Its wait starts then. */
+    if (c->st == CH_CONNECTING && !c->pending && l->enc_sent && !l->enc_on && now - c->t_req < T_CHAN_HELD) {
+        if (!c->held_logged) {
+            c->held_logged = 1;
+            log_line("pad %s: channel %#x: request held until the link is encrypted", addr_str(l->addr), c->psm);
+        }
+        c->t_state = now;
+        return;
+    }
+    if (c->st == CH_CONNECTING && now - c->t_state > (c->pending ? T_CHAN_PENDING : T_CHAN_CONNECT)) {
+        log_line("pad %s: channel %#x: no connection response (cid %#x; ACL sent %d, reported sent %d, received %d)",
+                 addr_str(l->addr), c->psm, c->scid, l->n_tx, l->n_tx_done, l->n_rx);
         chan_set(c, CH_CLOSED);         /* opened again by the link's step */
+        /* If the pad did take the request and only its answer was lost, it
+         * may ignore a repeat with the same cid: ask with a fresh one. Its
+         * answer to the old one may still come: see SIG_CONN_RSP. */
+        c->old_scid = c->scid;
+        c->scid += 0x10;
+        if (c->scid > 0xFF) c->scid = 0x40 | (c->scid & 0x0F);
     } else if (c->st == CH_CONFIG && now - c->t_state > T_CFG_TIMEOUT) {
         /* Only the pad can repeat its configuration request; if it went to
          * the system's driver, start the channel over. */
@@ -426,17 +476,53 @@ static void on_signaling(host_t *h, link_t *l, const unsigned char *d, int len)
             put16(r + 4, 0);            /* success */
             sig_send(h, l, SIG_CONN_RSP, id, r, 8);
             chan_send_cfg(h, l, ch);
+            l->pad_asked = 1;
             log_line("pad %s: accepted channel %#x", addr_str(l->addr), ch->psm);
             break;
 
         case SIG_CONN_RSP:      /* dcid, scid, result, status */
             if (clen < 8) break;
             ch = chan_by_scid(l, le16(c + 2));
-            if (!ch || ch->st != CH_CONNECTING) break;
-            if (le16(c + 4) == 1) break;            /* pending */
+            if (!ch) {
+                /* A late "yes" to a request given up on: the pad holds that
+                 * channel and would refuse a second one, so take it. */
+                chan *all[3] = { &l->sdp, &l->ctrl, &l->intr };
+                for (int k = 0; k < 3 && !ch; k++)
+                    if (all[k]->old_scid && all[k]->old_scid == le16(c + 2) &&
+                        (all[k]->st == CH_CLOSED || all[k]->st == CH_CONNECTING)) ch = all[k];
+                if (!ch || le16(c + 4) != 0) break;
+                log_line("pad %s: channel %#x: late answer to cid %#x, taking it",
+                         addr_str(l->addr), ch->psm, ch->old_scid);
+                ch->scid = ch->old_scid;
+                ch->old_scid = 0;
+                ch->dcid = le16(c);
+                chan_set(ch, CH_CONFIG);
+                chan_send_cfg(h, l, ch);
+                break;
+            }
+            if (ch->st != CH_CONNECTING) break;
+            if (le16(c + 4) == 1) {                 /* pending: wait for the answer */
+                if (!ch->pending)
+                    log_line("pad %s: channel %#x pending (status %u)", addr_str(l->addr), ch->psm, le16(c + 6));
+                ch->pending = 1;
+                ch->t_state = now_ms();
+                break;
+            }
             if (le16(c + 4) != 0) {
                 log_line("pad %s: channel %#x refused (%u)", addr_str(l->addr), ch->psm, le16(c + 4));
                 chan_set(ch, CH_CLOSED);
+                ch->t_retry = now_ms() + T_CHAN_REFUSED;
+                /* Seen on the PS5, the first reconnect after start: the
+                 * pad's own request for the channel never reached us, it
+                 * waits for our answer and refuses ours ("no resources")
+                 * until it gives up on the link 10 s later. Dropped after
+                 * the second refusal: it connects again by itself. Never
+                 * while pairing, nor once it has asked for a channel. */
+                if (le16(c + 4) == 4 && ++ch->refusals >= 2 && !l->pairing && !l->pad_asked) {
+                    log_line("pad %s: it holds channel %#x we never heard it ask for; dropping the link so it connects again",
+                             addr_str(l->addr), ch->psm);
+                    link_disconnect(h, l, "channel refused twice");
+                }
                 break;
             }
             ch->dcid = le16(c);
@@ -757,6 +843,14 @@ void link_input(host_t *h, link_t *l, const unsigned char *rep, int len)
     if (!l->prof || len < 1) return;
     r = l->prof->parse(l->pctx.bytes, rep, len, &l->st);
     if (r == PARSE_FULL) l->full = 1;
+    if (r == PARSE_RESTART && l->prof->init_report && (l->init_done || l->init_step != 0)) {
+        log_line("pad %s: it dropped its setup, sending the wake-up sequence again", addr_str(l->addr));
+        l->init_done = 0;
+        l->init_step = 0;
+        l->init_rounds = 0;
+        l->full = 0;
+        l->t_init = now_ms();
+    }
     if (r != PARSE_NONE && l->ready && h->ev.on_state)
         h->ev.on_state(h->ev.ud, slot_of(h, l), &l->st);
 }
@@ -772,6 +866,13 @@ void link_ready(host_t *h, link_t *l)
     info.profile = l->prof->name;
     memcpy(info.addr, l->addr, 6);
     log_line("pad %s: ready as %s in slot %d", addr_str(l->addr), l->prof->name, slot_of(h, l));
+    /* One pad per pairing window: an inquiry takes the radio from the new
+     * link (a Wii Remote dropped 3 s after it was ready, while the search
+     * for more pads went on). */
+    if (l->pairing && !l->le && now_ms() < h->pair_until) {
+        h->pair_until = now_ms();
+        log_line("pairing: done, search stopped");
+    }
     if (h->ev.on_connect) h->ev.on_connect(h->ev.ud, slot_of(h, l), &info);
 }
 
@@ -811,6 +912,15 @@ void init_tick(host_t *h, link_t *l, long now)
 
 /* ---- inbound ACL ---------------------------------------------------------- */
 
+/* Four bytes as hex, for the log (two cids of a signaling command). */
+static const char *hex4(const unsigned char *b)
+{
+    static char s[16];
+
+    snprintf(s, sizeof s, "%02x %02x %02x %02x", b[0], b[1], b[2], b[3]);
+    return s;
+}
+
 static void on_frame(host_t *h, link_t *l, unsigned cid, const unsigned char *d, int len)
 {
     chan *c;
@@ -818,6 +928,14 @@ static void on_frame(host_t *h, link_t *l, unsigned cid, const unsigned char *d,
     if (l->le) {
         le_on_frame(h, l, cid, d, len);
         return;
+    }
+    if (!l->ready && l->n_rx_logged < RX_LOG_MAX) {
+        l->n_rx_logged++;
+        if (cid == CID_SIGNALING && len >= 4)
+            log_line("pad %s: l2cap in: signal %#04x id %u, %d bytes%s%s", addr_str(l->addr), d[0], d[1], len,
+                     len >= 8 ? ": " : "", len >= 8 ? hex4(d + 4) : "");
+        else
+            log_line("pad %s: l2cap in: cid %#x, %d bytes", addr_str(l->addr), cid, len);
     }
     if (cid == CID_SIGNALING) {
         on_signaling(h, l, d, len);
@@ -840,7 +958,10 @@ static void on_acl(host_t *h, const unsigned char *pkt, int len)
     pb = (int)(hdr >> 12) & 3;
     dlen = (int)le16(pkt + 2);
     l = link_by_handle(h, hdr);
+    if (l) h->st.acl_ours++;
+    else h->st.acl_other++;
     if (!l || 4 + dlen > len) return;   /* not ours, or cut short */
+    l->n_rx++;
 
     if (pb == 1) {                      /* continuation */
         if (!l->rx_need || l->rx_len + dlen > (int)sizeof l->rx) {
@@ -863,6 +984,112 @@ static void on_acl(host_t *h, const unsigned char *pkt, int len)
 }
 
 /* ---- HCI events ----------------------------------------------------------- */
+
+/* HCI addresses are already least-significant-byte first. Wii red-Sync
+ * bonding uses these six host-address bytes verbatim, including zero bytes.
+ * Returns the remote's product id: 0x0306, 0x0330 (Wii Remote Plus), or 0. */
+static int wii_remote_name(const unsigned char *name, int length)
+{
+    static const char original[] = "Nintendo RVL-CNT-01";
+    static const char motion_plus[] = "Nintendo RVL-CNT-01-TR";
+    if (length >= (int)sizeof original && !memcmp(name, original, sizeof original)) return 0x0306;
+    if (length >= (int)sizeof motion_plus && !memcmp(name, motion_plus, sizeof motion_plus)) return 0x0330;
+    return 0;
+}
+
+/* Page scan down to the default while a pad is paged or linked, and back
+ * to what the system had once no BR/EDR link is left. The system's 208 ms
+ * of every 417 ms leaves a link half the radio: a Wii Remote's reports
+ * came late and the chip's buffers overflowed.
+ * Read back after each write: the log shows what the chip took. */
+static void page_scan_low(host_t *h)
+{
+    unsigned char p[4];
+    unsigned iv, win;
+
+    if (h->ps_low || h->ps_act0 < 0) return;
+    iv = (unsigned)h->ps_act0 >> 16;
+    win = (unsigned)h->ps_act0 & 0xFFFF;
+    if (win * 64 <= iv && h->ps_type0 <= 0) return;     /* light already */
+    put16(p, PS_LOW_INTERVAL);
+    put16(p + 2, PS_LOW_WINDOW);
+    send_cmd(h, OP_WRITE_PAGE_SCAN_ACT, p, 4);
+    if (h->ps_type0 > 0) {
+        p[0] = 0;
+        send_cmd(h, OP_WRITE_PAGE_SCAN_TYPE, p, 1);
+    }
+    send_cmd(h, OP_READ_PAGE_SCAN_ACT, NULL, 0);
+    send_cmd(h, OP_READ_PAGE_SCAN_TYPE, NULL, 0);
+    h->ps_low = 1;
+    log_line("controller: page scan turned down to %u ms every %u ms, standard, while a pad is linked (was %u ms every %u ms)",
+             PS_LOW_WINDOW * 5 / 8, PS_LOW_INTERVAL * 5 / 8, win * 5 / 8, iv * 5 / 8);
+}
+
+static void page_scan_restore(host_t *h, int wait)
+{
+    unsigned char p[4];
+
+    if (!h->ps_low) return;
+    h->ps_low = 0;
+    put16(p, (unsigned)h->ps_act0 >> 16);
+    put16(p + 2, (unsigned)h->ps_act0 & 0xFFFF);
+    if (wait) hci_sync(h, OP_WRITE_PAGE_SCAN_ACT, p, 4);
+    else send_cmd(h, OP_WRITE_PAGE_SCAN_ACT, p, 4);
+    if (h->ps_type0 > 0) {
+        p[0] = (unsigned char)h->ps_type0;
+        if (wait) hci_sync(h, OP_WRITE_PAGE_SCAN_TYPE, p, 1);
+        else send_cmd(h, OP_WRITE_PAGE_SCAN_TYPE, p, 1);
+    }
+    log_line("controller: page scan put back to %u ms every %u ms%s",
+             ((unsigned)h->ps_act0 & 0xFFFF) * 5 / 8, ((unsigned)h->ps_act0 >> 16) * 5 / 8,
+             h->ps_type0 > 0 ? ", interlaced" : "");
+    if (!wait) {
+        send_cmd(h, OP_READ_PAGE_SCAN_ACT, NULL, 0);
+        send_cmd(h, OP_READ_PAGE_SCAN_TYPE, NULL, 0);
+    }
+}
+
+static void page_pad(host_t *h, link_t *l)
+{
+    const unsigned char *c = l->create_params;
+    unsigned offset = le16(c + 10);
+
+    if (l->pairing) page_scan_low(h);
+    l->paging = 1;
+    l->page_started = 0;
+    l->t_create = now_ms();
+    send_cmd(h, OP_CREATE_CONNECTION, l->create_params, sizeof l->create_params);
+    if (offset & 0x8000)
+        log_line("pad %s: connecting to pair (scan mode R%u, clock offset %#06x)",
+                 addr_str(l->addr), c[8], offset & 0x7FFF);
+    else
+        log_line("pad %s: connecting to pair (scan mode R%u, no clock offset)", addr_str(l->addr), c[8]);
+}
+
+/* A page that timed out while pairing is tried again at once, rather than
+ * after the next inquiry finds the pad (up to 10 s of a Wii Remote's ~20 s
+ * red-Sync window). Each retry flips between the inquiry's scan mode and
+ * clock offset and the most patient settings: R2, no clock offset. */
+static int page_again(host_t *h, link_t *l)
+{
+    unsigned char *c = l->create_params;
+
+    if (!l->pairing || l->page_tries >= PAGE_RETRIES || now_ms() >= h->pair_until) return 0;
+    l->page_tries++;
+    if (l->page_tries & 1) {
+        l->page_mode = c[8];
+        l->page_offset = le16(c + 10);
+        c[8] = 0x02;
+        put16(c + 10, 0);
+    } else {
+        c[8] = l->page_mode;
+        put16(c + 10, l->page_offset);
+    }
+    log_line("pad %s: page timed out, paging again at once (retry %d of %d)",
+             addr_str(l->addr), l->page_tries, PAGE_RETRIES);
+    page_pad(h, l);
+    return 1;
+}
 
 static void pair_with(host_t *h, const unsigned char *rec)
 {
@@ -889,12 +1116,44 @@ static void pair_with(host_t *h, const unsigned char *rec)
     p[9] = 0;
     put16(p + 10, le16(rec + 11) | 0x8000);   /* clock offset, valid */
     p[12] = 1;                          /* allow role switch */
-    send_cmd(h, OP_CREATE_CONNECTION, p, 13);
-    log_line("pad %s: connecting to pair", addr_str(rec));
+    memcpy(l->create_params, p, sizeof l->create_params);
+    page_pad(h, l);
+}
+
+/* The name picks the PIN (a Wii Remote's is binary), and SDP IDs come only
+ * after authentication in this stack, too late. Asked before connecting, the
+ * controller must page the pad just for it, which a Wii Remote in red-Sync
+ * mode answered in only 3 of 9 attempts, using up its window. Over the link
+ * it is a single LMP exchange, and authentication waits for it. */
+static void ask_name(host_t *h, link_t *l)
+{
+    unsigned char p[10];
+    const unsigned char *c = l->create_params;
+
+    memcpy(p, c, 6);
+    p[6] = c[8];                        /* page scan repetition mode */
+    p[7] = 0;
+    p[8] = c[10]; p[9] = c[11];         /* clock offset */
+    l->name_pending = 1;
+    l->name_cancelled = 0;
+    l->name_tries++;
+    l->t_name = now_ms();
+    log_line("pad %s: asking its name over the link", addr_str(l->addr));
+    if (!send_cmd(h, OP_REMOTE_NAME_REQ, p, 10)) l->name_pending = 0;
+}
+
+/* The link's signal, for telling a weak radio link from a silent pad. */
+static void read_rssi(host_t *h, link_t *l)
+{
+    unsigned char p[2];
+
+    put16(p, l->handle);
+    send_cmd(h, OP_READ_RSSI, p, 2);
+    l->t_rssi = now_ms();
 }
 
 /* An inquiry record: addr 6, page scan mode 1, reserved 1, class 3,
- * clock offset 2, RSSI 1. */
+ * clock offset 2, RSSI 1 (RSSI_NONE from a plain Inquiry Result). */
 static void on_found(host_t *h, const unsigned char *rec)
 {
     uint32_t cod = (uint32_t)rec[8] | (uint32_t)rec[9] << 8 | (uint32_t)rec[10] << 16;
@@ -904,7 +1163,10 @@ static void on_found(host_t *h, const unsigned char *rec)
         log_line("inquiry: %s class %06x is not a gamepad, ignored", addr_str(rec), (unsigned)cod);
         return;
     }
-    log_line("found gamepad %s (class %06x)", addr_str(rec), (unsigned)cod);
+    if (rec[13] == RSSI_NONE)
+        log_line("found gamepad %s (class %06x), no RSSI in this inquiry mode", addr_str(rec), (unsigned)cod);
+    else
+        log_line("found gamepad %s (class %06x), RSSI %d dBm", addr_str(rec), (unsigned)cod, (int)(signed char)rec[13]);
     pair_with(h, rec);
 }
 
@@ -931,6 +1193,85 @@ static void purge_stale_links(host_t *h)
     }
 }
 
+/* The system's own connections, as far as PadBridge sees them: its
+ * events about them are otherwise dropped. A limited number of lines. */
+static int other_line(host_t *h)
+{
+    if (h->other_logged >= OTHER_LOG_MAX) return 0;
+    if (++h->other_logged == OTHER_LOG_MAX)
+        log_line("chip: no more lines about other connections this run");
+    return 1;
+}
+
+/* A chip setting from a read's Command Complete, logged when it changes.
+ * The system's driver may read or change them too. */
+static void on_setting(host_t *h, unsigned op, const unsigned char *ev, int len)
+{
+    int k, v;
+    unsigned a = 0, b = 0;
+
+    if (len < 7 || ev[5] != 0) return;
+    switch (op) {
+    case OP_READ_PAGE_TIMEOUT:
+        if (len < 8) return;
+        k = 0; a = le16(ev + 6); v = (int)a;
+        break;
+    case OP_READ_PAGE_SCAN_ACT:
+    case OP_READ_INQ_SCAN_ACT:
+        if (len < 10) return;
+        k = op == OP_READ_PAGE_SCAN_ACT ? 1 : 2;
+        a = le16(ev + 6); b = le16(ev + 8); v = (int)(a << 16 | b);
+        break;
+    case OP_READ_PAGE_SCAN_TYPE: k = 3; a = ev[6]; v = (int)a; break;
+    case OP_READ_INQUIRY_MODE:   k = 4; a = ev[6]; v = (int)a; break;
+    case OP_READ_SCAN_ENABLE:    k = 5; a = ev[6]; v = (int)a; break;
+    default: return;
+    }
+    if (h->setting[k] == v) return;
+    h->setting[k] = v;
+    switch (k) {
+    case 0: log_line("controller: page timeout %u slots (%u ms)", a, a * 5 / 8); break;
+    case 1: log_line("controller: page scan every %u ms for %u ms", a * 5 / 8, b * 5 / 8); break;
+    case 2: log_line("controller: inquiry scan every %u ms for %u ms", a * 5 / 8, b * 5 / 8); break;
+    case 3: log_line("controller: page scan type %u (%s)", a, a ? "interlaced" : "standard"); break;
+    case 4: log_line("controller: inquiry mode %u (%s)", a,
+                     a == 0 ? "standard" : a == 1 ? "with RSSI" : "extended"); break;
+    default: log_line("controller: scan enable %#x", a); break;
+    }
+}
+
+/* Sums up what PadBridge saw of the chip's traffic, every T_CHIP_STATS
+ * while pairing or linking: event counts by code, ACL packets for our
+ * links and for others, and commands by opcode as sent by us / answered
+ * (to anyone: a reply to a command we never sent is the system's). */
+static void chip_stats(host_t *h, long now, int active)
+{
+    char line[768];
+    int i, n = 0, any = 0;
+
+    if (!h->st.t0) h->st.t0 = now;
+    if (now - h->st.t0 < T_CHIP_STATS) return;
+    for (i = 0; i < 256; i++) any |= h->st.ev[i];
+    any |= h->st.acl_ours | h->st.acl_other | h->st.n_cmd;
+    /* Outside pairing, only when there is more than command replies,
+     * completed-packet counts and LE reports. */
+    for (i = 0; i < 256 && !active; i++)
+        if (h->st.ev[i] && i != 0x0E && i != 0x0F && i != 0x13 && i != 0x3E) active = 1;
+    if (active && any) {
+        n += snprintf(line + n, sizeof line - (size_t)n, "chip, last %ld s: events", (now - h->st.t0) / 1000);
+        for (i = 0; i < 256 && n < (int)sizeof line - 32; i++)
+            if (h->st.ev[i]) n += snprintf(line + n, sizeof line - (size_t)n, " %02x:%d", i, h->st.ev[i]);
+        n += snprintf(line + n, sizeof line - (size_t)n, "; ACL ours %d, others %d; commands sent/answered",
+                      h->st.acl_ours, h->st.acl_other);
+        for (i = 0; i < h->st.n_cmd && n < (int)sizeof line - 32; i++)
+            n += snprintf(line + n, sizeof line - (size_t)n, " %04x:%d/%d",
+                          h->st.cmd[i].op, h->st.cmd[i].sent, h->st.cmd[i].answered);
+        log_line("%s", line);
+    }
+    memset(&h->st, 0, sizeof h->st);
+    h->st.t0 = now;
+}
+
 static void on_event(host_t *h, const unsigned char *ev, int len)
 {
     unsigned char p[32];
@@ -938,6 +1279,7 @@ static void on_event(host_t *h, const unsigned char *ev, int len)
     int i;
 
     if (len < 2) return;
+    h->st.ev[ev[0]]++;
     switch (ev[0]) {
     case 0x01:  /* Inquiry Complete */
         log_line("inquiry: finished (status %#04x)", len > 2 ? ev[2] : 0xFF);
@@ -951,7 +1293,7 @@ static void on_event(host_t *h, const unsigned char *ev, int len)
             memcpy(rec, r, 7);          /* to the RSSI layout on_found reads */
             rec[7] = 0;
             memcpy(rec + 8, r + 9, 5);
-            rec[13] = 0;
+            rec[13] = RSSI_NONE;
             on_found(h, rec);
         }
         break;
@@ -965,11 +1307,17 @@ static void on_event(host_t *h, const unsigned char *ev, int len)
         break;
 
     case 0x04:  /* Connection Request: addr, class, link type */
-        if (len < 12 || ev[11] != 1) break;
+        if (len < 12) break;
         {
             db_rec *r = db_find(h, ev + 2);
-            if (!r || r->le || link_by_addr(h, ev + 2)) break;      /* not ours */
+            if (ev[11] != 1 || !r || r->le || link_by_addr(h, ev + 2)) {     /* not ours */
+                if (other_line(h))
+                    log_line("chip: connection request from %s, class %06x, link type %u (not ours)",
+                             addr_str(ev + 2), (unsigned)(ev[8] | ev[9] << 8 | ev[10] << 16), ev[11]);
+                break;
+            }
         }
+        log_line("pad %s: asks to connect, accepting", addr_str(ev + 2));
         l = link_new(h, ev + 2);
         memcpy(p, ev + 2, 6);
         if (!l) {
@@ -982,22 +1330,53 @@ static void on_event(host_t *h, const unsigned char *ev, int len)
         log_line("pad %s: reconnecting", addr_str(ev + 2));
         break;
 
+    case 0x07:  /* Remote Name Request Complete: status, address, name */
+        if (len < 9 || !(l = link_by_addr(h, ev + 3)) || !l->name_pending) break;
+        /* The end of a request we cancelled: link_step asks once more. */
+        if (ev[2] != 0 && l->name_cancelled && l->name_tries < NAME_TRIES) break;
+        l->name_pending = 0;            /* link_step authenticates next */
+        l->wii_remote = ev[2] == 0 ? wii_remote_name(ev + 9, len - 9) : 0;
+        if (l->wii_remote) {
+            log_line("pad %s: Wii Remote name recognized (red Sync bonding)", addr_str(l->addr));
+        } else if (ev[2] != 0) {
+            log_line("pad %s: name request ended with status %#04x", addr_str(l->addr), ev[2]);
+            log_line("pad %s: remote name unavailable, using existing pairing policy", addr_str(l->addr));
+        }
+        break;
+
     case 0x03:  /* Connection Complete: status, handle, addr, type, enc */
-        if (len < 13 || !(l = link_by_addr(h, ev + 5)) || l->connected) break;
+        if (len < 13) break;
+        if (!(l = link_by_addr(h, ev + 5)) || l->connected) {
+            if (other_line(h))
+                log_line("chip: connection complete for %s, status %#04x, handle %#05x, link type %u (no link of ours)",
+                         addr_str(ev + 5), ev[2], le16(ev + 3) & 0x0FFF, ev[11]);
+            break;
+        }
         if (ev[2] != 0) {
             log_line("pad %s: connection failed (status %#04x)", addr_str(l->addr), ev[2]);
+            if (ev[2] == 0x04 && page_again(h, l)) break;
             link_free(h, l);
             break;
         }
+        l->paging = 0;
         l->connected = 1;
         l->handle = le16(ev + 3) & 0x0FFF;
         l->t_conn = now_ms();
         log_line("pad %s: connected, handle %#05x", addr_str(l->addr), l->handle);
+        read_rssi(h, l);
+        if (l->pairing) ask_name(h, l);
         break;
 
     case 0x05:  /* Disconnection Complete: status, handle, reason */
-        if (len < 6 || !(l = link_by_handle(h, le16(ev + 3)))) break;
-        log_line("pad %s: disconnected (reason %#04x)", addr_str(l->addr), ev[5]);
+        if (len < 6) break;
+        if (!(l = link_by_handle(h, le16(ev + 3)))) {
+            if (other_line(h))
+                log_line("chip: handle %#05x disconnected, status %#04x, reason %#04x (no link of ours)",
+                         le16(ev + 3) & 0x0FFF, ev[2], ev[5]);
+            break;
+        }
+        log_line("pad %s: disconnected (reason %#04x); ACL sent %d, reported sent %d, received %d",
+                 addr_str(l->addr), ev[5], l->n_tx, l->n_tx_done, l->n_rx);
         link_free(h, l);
         break;
 
@@ -1006,6 +1385,8 @@ static void on_event(host_t *h, const unsigned char *ev, int len)
         if (ev[2] == 0) {
             l->auth_ok = 1;
             l->t_auth_ok = now_ms();
+            if (l->wii_remote) log_line("pad %s: Wii authentication status 0", addr_str(l->addr));
+            else if (l->pairing) log_line("pad %s: authentication status 0", addr_str(l->addr));
             break;
         }
         log_line("pad %s: authentication failed (status %#04x)", addr_str(l->addr), ev[2]);
@@ -1039,10 +1420,20 @@ static void on_event(host_t *h, const unsigned char *ev, int len)
         h->cc_op = le16(ev + 3);
         h->cc_len = len < (int)sizeof h->cc ? len : (int)sizeof h->cc;
         memcpy(h->cc, ev, (size_t)h->cc_len);
+        stats_cmd(h, h->cc_op, 0);
+        on_setting(h, h->cc_op, ev, len);
+        if ((h->cc_op == OP_WRITE_PAGE_SCAN_ACT || h->cc_op == OP_WRITE_PAGE_SCAN_TYPE) && ev[5] != 0)
+            log_line("controller: page scan %s write refused (status %#04x)",
+                     h->cc_op == OP_WRITE_PAGE_SCAN_ACT ? "activity" : "type", ev[5]);
+        if (h->cc_op == OP_PIN_CODE_REPLY && len >= 12 && (l = link_by_addr(h, ev + 6)))
+            log_line("pad %s: controller took the PIN reply (status %#04x)", addr_str(l->addr), ev[5]);
+        if (h->cc_op == OP_READ_RSSI && len >= 9 && ev[5] == 0 && (l = link_by_handle(h, le16(ev + 6))))
+            log_line("pad %s: link RSSI %d", addr_str(l->addr), (int)(signed char)ev[8]);
         le_on_cmd_complete(h, h->cc_op, ev[5]);
         break;
 
     case 0x0F:  /* Command Status: status, credits, opcode */
+        if (len >= 6) stats_cmd(h, le16(ev + 4), 0);
         if (len >= 6 && le16(ev + 4) == OP_INQUIRY) {
             log_line("inquiry: controller answered status %#04x", ev[2]);
             if (ev[2] != 0) h->inquiring = 0;
@@ -1051,14 +1442,34 @@ static void on_event(host_t *h, const unsigned char *ev, int len)
             le_on_create_status(h, ev[2]);
             break;
         }
+        if (len >= 6 && ev[2] == 0 && le16(ev + 4) == OP_CREATE_CONNECTION) {
+            for (i = 0; i < HOST_MAX_PADS; i++) {
+                l = &h->links[i];
+                if (l->used && !l->connected && !l->le && l->paging && !l->page_started) {
+                    l->page_started = 1;
+                    log_line("pad %s: controller is paging it", addr_str(l->addr));
+                }
+            }
+        }
         if (len < 6 || ev[2] == 0) break;
         if (le16(ev + 4) == OP_CREATE_CONNECTION && ev[2] == 0x0B) purge_stale_links(h);
         if (le16(ev + 4) == OP_CREATE_CONNECTION) {
+            /* Only links that sent one: a link still asking its name has
+             * nothing to be refused. */
             for (i = 0; i < HOST_MAX_PADS; i++) {
                 l = &h->links[i];
-                if (l->used && !l->connected && !l->le && l->pairing) {
+                if (l->used && !l->connected && !l->le && l->paging) {
                     log_line("pad %s: connection refused (status %#04x)", addr_str(l->addr), ev[2]);
                     link_free(h, l);
+                }
+            }
+        } else if (le16(ev + 4) == OP_REMOTE_NAME_REQ) {
+            for (i = 0; i < HOST_MAX_PADS; i++) {
+                l = &h->links[i];
+                if (l->used && !l->le && l->name_pending) {
+                    log_line("pad %s: name request refused (status %#04x)", addr_str(l->addr), ev[2]);
+                    log_line("pad %s: remote name unavailable, using existing pairing policy", addr_str(l->addr));
+                    l->name_pending = 0;
                 }
             }
         } else if (le16(ev + 4) == OP_AUTH_REQUESTED) {
@@ -1067,10 +1478,28 @@ static void on_event(host_t *h, const unsigned char *ev, int len)
             for (i = 0; i < HOST_MAX_PADS; i++) {
                 l = &h->links[i];
                 if (l->used && l->auth_sent && !l->auth_ok) {
+                    log_line("pad %s: authentication request refused (status %#04x)", addr_str(l->addr), ev[2]);
                     l->auth_sent = 0;
                     l->t_conn = now_ms();
                 }
             }
+        } else if (le16(ev + 4) == OP_SET_ENCRYPTION) {
+            for (i = 0; i < HOST_MAX_PADS; i++) {
+                l = &h->links[i];
+                if (l->used && !l->le && l->enc_sent && !l->enc_on)
+                    log_line("pad %s: encryption request refused (status %#04x)", addr_str(l->addr), ev[2]);
+            }
+        }
+        break;
+
+    case 0x1A:  /* Data Buffer Overflow: link type */
+        if (len >= 3 && ev[2] == 0x01) {
+            acl_pool *p = &h->br;
+            if (!p->overflows++ || p->expire_ms != INFLIGHT_SLOW_MS)
+                log_line("controller: ACL buffers overflowed; a buffer is free again only when reported sent, or after %d ms",
+                         INFLIGHT_SLOW_MS);
+            p->expire_ms = INFLIGHT_SLOW_MS;
+            p->credits = 0;             /* full: wait for the reports */
         }
         break;
 
@@ -1078,23 +1507,45 @@ static void on_event(host_t *h, const unsigned char *ev, int len)
         for (i = 0; i < ev[2] && 3 + i * 4 + 4 <= len; i++) {
             int done = (int)le16(ev + 3 + i * 4 + 2);
             l = link_by_handle(h, le16(ev + 3 + i * 4));
-            if (l) pool_done(pool_of(h, l), done);
+            if (l) {
+                pool_done(pool_of(h, l), done);
+                l->n_tx_done += done;
+            }
         }
         break;
 
     case 0x16:  /* PIN Code Request: legacy pairing */
-        if (len < 8 || !link_by_addr(h, ev + 2)) break;
+        if (len < 8 || !(l = link_by_addr(h, ev + 2))) break;
         memset(p, 0, sizeof p);
         memcpy(p, ev + 2, 6);
-        p[6] = 4;
-        memcpy(p + 7, "0000", 4);
+        if (l->wii_remote) {
+            static const unsigned char zero[6] = {0};
+            if (!memcmp(h->bdaddr, zero, sizeof zero)) {
+                link_disconnect(h, l, "Wii PIN unavailable: host address unknown"); break;
+            }
+            p[6] = 6;
+            memcpy(p + 7, h->bdaddr, 6);
+            log_line("pad %s: Wii binary PIN length 6 (host address, red Sync)", addr_str(l->addr));
+        } else {
+            p[6] = 4;
+            memcpy(p + 7, "0000", 4);
+            log_line("pad %s: legacy PIN requested, answering 0000", addr_str(l->addr));
+        }
         send_cmd(h, OP_PIN_CODE_REPLY, p, 23);
         break;
 
     case 0x17:  /* Link Key Request */
-        if (len < 8 || !link_by_addr(h, ev + 2)) break;
+        if (len < 8) break;
+        if (!(l = link_by_addr(h, ev + 2))) {
+            if (other_line(h))
+                log_line("chip: link key requested for %s%s (no link of ours)", addr_str(ev + 2),
+                         db_find(h, ev + 2) ? ", a stored pad" : "");
+            break;
+        }
         {
             db_rec *r = db_find(h, ev + 2);
+            if (l->pairing)
+                log_line("pad %s: link key requested, %s", addr_str(l->addr), r ? "answering the stored key" : "none stored");
             if (r) {
                 memcpy(p, ev + 2, 6);
                 memcpy(p + 6, r->key, 16);
@@ -1113,11 +1564,19 @@ static void on_event(host_t *h, const unsigned char *ev, int len)
             r->type = ev[24];
             db_save(h);
         }
+        /* Bonded: authentication succeeded, even if its own event is lost.
+         * That event normally follows within milliseconds; until then (or
+         * 0.5 s) the controller may refuse encryption, so wait for it. */
+        if (!l->auth_ok) {
+            l->auth_ok = 1;
+            l->t_auth_ok = now_ms() + T_AUTH_AFTER_KEY;
+        }
         log_line("pad %s: paired, key stored", addr_str(ev + 2));
         break;
 
     case 0x31:  /* IO Capability Request */
-        if (len < 8 || !link_by_addr(h, ev + 2)) break;
+        if (len < 8 || !(l = link_by_addr(h, ev + 2))) break;
+        if (l->pairing) log_line("pad %s: Secure Simple Pairing requested", addr_str(l->addr));
         memcpy(p, ev + 2, 6);
         p[6] = 0x03;                    /* NoInputNoOutput */
         p[7] = 0x00;                    /* no OOB data */
@@ -1157,6 +1616,29 @@ static void link_step(host_t *h, link_t *l, long now)
         link_disconnect(h, l, "setup did not finish");
         return;
     }
+    if (!l->ready && now - l->t_rssi >= T_RSSI) read_rssi(h, l);
+
+    /* A pad being paired is asked its name first: the PIN depends on it. */
+    if (l->name_pending) {
+        if (!l->name_cancelled && now - l->t_name >= T_NAME_TIMEOUT) {
+            log_line("pad %s: name request unanswered after %d s, cancelling it",
+                     addr_str(l->addr), T_NAME_TIMEOUT / 1000);
+            send_cmd(h, OP_REMOTE_NAME_CANCEL, l->addr, 6);
+            l->name_cancelled = 1;
+            l->t_name = now;
+        } else if (l->name_cancelled && now - l->t_name >= T_NAME_CANCEL_WAIT) {
+            if (l->name_tries < NAME_TRIES) {
+                /* A Wii Remote answers in milliseconds when it answers: the
+                 * reply may have gone to the system's driver. */
+                log_line("pad %s: asking its name once more", addr_str(l->addr));
+                ask_name(h, l);
+            } else {
+                log_line("pad %s: remote name unavailable, using existing pairing policy", addr_str(l->addr));
+                l->name_pending = 0;
+            }
+        }
+        return;
+    }
 
     /* Authentication and encryption. */
     if (!l->auth_ok) {
@@ -1164,20 +1646,36 @@ static void link_step(host_t *h, link_t *l, long now)
             put16(p, l->handle);
             send_cmd(h, OP_AUTH_REQUESTED, p, 2);
             l->auth_sent = 1;
+            if (l->pairing) log_line("pad %s: requesting authentication", addr_str(l->addr));
         }
         return;
     }
     if (!l->enc_on) {
-        if (!l->enc_sent && now - l->t_auth_ok >= (l->pairing ? 0 : T_SELF_ENCRYPT)) {
+        int resend = l->enc_sent && now - l->t_enc >= T_ENC_RETRY && l->enc_tries < ENC_TRIES;
+        if ((!l->enc_sent && now - l->t_auth_ok >= (l->pairing ? 0 : T_SELF_ENCRYPT)) || resend) {
+            /* The Encryption Change event may have gone to the system's
+             * driver: asking again gets it reported again. */
+            if (resend)
+                log_line("pad %s: no encryption change after %d s, asking again",
+                         addr_str(l->addr), T_ENC_RETRY / 1000);
             put16(p, l->handle);
             p[2] = 1;
             send_cmd(h, OP_SET_ENCRYPTION, p, 3);
             l->enc_sent = 1;
+            l->enc_tries++;
+            l->t_enc = now;
         }
-        return;
-    }
-    if (!l->t_secure) {
-        l->t_secure = now;
+        /* A Wii Remote in red-Sync mode gives up within ~20-30 s of the
+         * button press: open its channels without waiting for encryption. */
+        if (!(l->pairing && l->wii_remote) || now < l->t_auth_ok) return;
+        if (!l->t_secure) {
+            l->t_secure = now;
+            log_line("pad %s: authenticated; opening its channels without waiting for encryption",
+                     addr_str(l->addr));
+        }
+    } else if (!l->enc_logged) {
+        l->enc_logged = 1;
+        if (!l->t_secure) l->t_secure = now;
         log_line("pad %s: link encrypted", addr_str(l->addr));
     }
 
@@ -1189,6 +1687,17 @@ static void link_step(host_t *h, link_t *l, long now)
             l->vid = r->vid;
             l->pid = r->pid;
             l->ids_known = 1;
+        } else if (l->wii_remote) {
+            /* Its name says which it is. A Wii Remote ends the link if its
+             * HID channels are not opened soon; skip the slow SDP queries. */
+            l->vid = 0x057E;
+            l->pid = (uint16_t)l->wii_remote;
+            l->ids_known = 1;
+            r = db_put(h, l->addr);
+            r->vid = l->vid;
+            r->pid = l->pid;
+            db_save(h);
+            log_line("pad %s: vendor %04x product %04x, from its name", addr_str(l->addr), l->vid, l->pid);
         } else {
             sdp_start(l, SDP_Q_IDS);
         }
@@ -1210,13 +1719,19 @@ static void link_step(host_t *h, link_t *l, long now)
     if (l->sdp.st == CH_OPEN) chan_close(h, l, &l->sdp);
 
     /* HID channels: control, then interrupt. */
-    chan_tick(h, l, &l->ctrl, now);
-    chan_tick(h, l, &l->intr, now);
-    if (l->ctrl.st == CH_CLOSED && now - l->t_secure >= T_SELF_CHANNELS)
-        chan_connect(h, l, &l->ctrl);
-    if (l->ctrl.st == CH_OPEN && l->intr.st == CH_CLOSED &&
-        now - l->ctrl.t_state >= T_INTR_AFTER)
-        chan_connect(h, l, &l->intr);
+    /* A Wii Remote being paired waits for us to open them, and gives up on
+     * the link soon: open them at once. Reconnecting, it opens its own. */
+    {
+        int now_open = l->pairing && l->vid == 0x057E && (l->pid == 0x0306 || l->pid == 0x0330);
+        chan_tick(h, l, &l->ctrl, now);
+        chan_tick(h, l, &l->intr, now);
+        if (l->ctrl.st == CH_CLOSED && now >= l->ctrl.t_retry &&
+            now - l->t_secure >= (now_open ? 0 : T_SELF_CHANNELS))
+            chan_connect(h, l, &l->ctrl);
+        if (l->ctrl.st == CH_OPEN && l->intr.st == CH_CLOSED && now >= l->intr.t_retry &&
+            now - l->ctrl.t_state >= (now_open ? 0 : T_INTR_AFTER))
+            chan_connect(h, l, &l->intr);
+    }
 
     if (!l->ready) {
         if (l->ctrl.st == CH_OPEN && l->intr.st == CH_OPEN) link_ready(h, l);
@@ -1265,7 +1780,7 @@ static void start_inquiry(host_t *h)
 void host_poll(host_t *h, int timeout_ms)
 {
     long now;
-    int i, linking = 0;
+    int i, linking = 0, linked = 0;
 
     if (!h) return;                     /* no Bluetooth: nothing to do */
 
@@ -1280,8 +1795,11 @@ void host_poll(host_t *h, int timeout_ms)
             l->out.strong = l->out.weak = 0;
             send_output(h, l);
         }
-        if (h->links[i].used && h->links[i].pairing && !h->links[i].ready &&
-            !h->links[i].le) linking = 1;
+        /* Any pad being set up, paired or reconnecting: an inquiry would
+         * take the radio its authentication needs (a Wii Remote dropped
+         * every reconnect after 3 s until the search ended). */
+        if (h->links[i].used && !h->links[i].ready && !h->links[i].le) linking = 1;
+        if (h->links[i].used && !h->links[i].le) linked = 1;
     }
     le_poll(h, now);
 
@@ -1300,7 +1818,17 @@ void host_poll(host_t *h, int timeout_ms)
         h->probes = 0;
     }
 
-    /* Keep searching through the pairing window, one pad at a time. */
+    if (linked) page_scan_low(h);
+    else page_scan_restore(h, 0);
+    chip_stats(h, now, now < h->pair_until || linking);
+
+    /* Keep searching through the pairing window, one pad at a time, and
+     * never while a pad is being set up. */
+    if (linking && h->inquiring) {
+        send_cmd(h, OP_INQUIRY_CANCEL, NULL, 0);
+        h->inquiring = 0;
+        log_line("inquiry: paused while a pad connects");
+    }
     if (now < h->pair_until && !h->inquiring && !linking) start_inquiry(h);
     if (now >= h->pair_until && h->inquiring) {
         send_cmd(h, OP_INQUIRY_CANCEL, NULL, 0);
@@ -1312,6 +1840,9 @@ int host_pair(host_t *h, int seconds)
 {
     h->pair_until = now_ms() + (long)seconds * 1000;
     log_line("pairing: searching for %d s", seconds);
+    /* Logged if the system changed them since setup. */
+    send_cmd(h, OP_READ_PAGE_TIMEOUT, NULL, 0);
+    send_cmd(h, OP_READ_SCAN_ENABLE, NULL, 0);
     return 1;
 }
 
@@ -1323,6 +1854,17 @@ int host_set_output(host_t *h, int slot, const pad_output *out)
     l = &h->links[slot];
     if (!l->used || !l->ready) return 0;
     l->out = *out;
+    return send_output(h, l);
+}
+
+int host_set_player(host_t *h, int slot, int player)
+{
+    link_t *l;
+
+    if (slot < 0 || slot >= HOST_MAX_PADS || player < 1 || player > 4) return 0;
+    l = &h->links[slot];
+    if (!l->used || !l->ready) return 0;
+    l->out.player = (uint8_t)player;
     return send_output(h, l);
 }
 
@@ -1466,6 +2008,7 @@ static int setup(host_t *h)
     unsigned char scan[1];
 
     h->scan_orig = h->scan_set = -1;
+    for (int k = 0; k < 6; k++) h->setting[k] = -1;
     if (!hci_sync(h, OP_READ_BUFFER_SIZE, NULL, 0) || h->cc_len < 13) return 0;
     h->acl_mtu = le16(h->cc + 6);
     h->br.credits = h->br.max = (int)le16(h->cc + 9);
@@ -1485,6 +2028,15 @@ static int setup(host_t *h)
         log_line("controller: page scan turned on (was %#x)", h->scan_orig);
     }
 
+    /* For the log: what paging and scanning get of the radio. */
+    hci_sync(h, OP_READ_PAGE_TIMEOUT, NULL, 0);
+    hci_sync(h, OP_READ_PAGE_SCAN_ACT, NULL, 0);
+    hci_sync(h, OP_READ_PAGE_SCAN_TYPE, NULL, 0);
+    hci_sync(h, OP_READ_INQ_SCAN_ACT, NULL, 0);
+    hci_sync(h, OP_READ_INQUIRY_MODE, NULL, 0);
+    h->ps_act0 = h->setting[1];
+    h->ps_type0 = h->setting[3];
+
     if (hci_sync(h, OP_READ_BD_ADDR, NULL, 0) && h->cc_len >= 12) memcpy(h->bdaddr, h->cc + 6, 6);
     log_line("controller address %s", addr_str(h->bdaddr));
     le_setup(h);
@@ -1496,6 +2048,7 @@ static void restore(host_t *h)
 {
     unsigned char scan[1];
 
+    page_scan_restore(h, 1);
     le_shutdown(h);
     if (h->scan_set < 0) return;
     if (hci_sync(h, OP_READ_SCAN_ENABLE, NULL, 0) && h->cc_len >= 7 && h->cc[6] == h->scan_set) {
@@ -1526,6 +2079,7 @@ host_t *host_open(hci_t hci, const char *db_path, const host_events *ev)
         free(h);
         return NULL;
     }
+    memset(&h->st, 0, sizeof h->st);    /* summaries start after setup */
     return h;
 }
 

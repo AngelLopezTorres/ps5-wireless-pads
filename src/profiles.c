@@ -1,5 +1,6 @@
 #include "profiles.h"
 #include "crc32.h"
+#include "log.h"
 #include "util.h"
 
 #include <string.h>
@@ -517,6 +518,221 @@ static int switch_init(void *ctx, int step, const pad_output *o, uint8_t *b, int
     }
 }
 
+/* ---- Wii Remote, with a Guitar Hero guitar --------------------------------
+ *
+ * Reports as documented by WiiBrew. Every output report's first byte after
+ * the id carries the rumble bit (bit 0). Input reports start with the core
+ * buttons:
+ *   [1] left right down up + . . .   [2] 2 1 B A - . . Home
+ *
+ *   0x20 status: [3] flags (bit 1: extension plugged in) [6] battery level.
+ *        Sent when asked (0x15) and by itself when an extension is plugged
+ *        or unplugged; after that the remote reports only 0x30 again until
+ *        the reporting mode is set once more.
+ *   0x21 memory read reply: [3] size-1 << 4 | error [4..5] address [6..] data
+ *   0x22 acknowledgement of an output report
+ *   0x30 core buttons; 0x32 core buttons and 8 extension bytes at [3]
+ *        (0x34 at [3], 0x35 at [6], 0x36 at [13], 0x37 at [16])
+ *
+ * The extension is switched to unencrypted reports by writing 0x55 to
+ * register 0xA400F0, then 0x00 to 0xA400FB; its 6-byte id is at 0xA400FA.
+ * A guitar's id is 00 00 A4 20 01 03 (drums: 01 00 A4 20 01 03). Its data,
+ * buttons active low:
+ *   [0] stick x (6 bits)  [1] stick y (6 bits, up is higher)
+ *   [2] touch bar (World Tour)  [3] whammy (5 bits, about 0x10 at rest)
+ *   [4] . strum-down . - . + . .
+ *   [5] orange red blue green yellow . . strum-up
+ *
+ * Guitar mapping, as PlayStation guitars report: green cross, red circle,
+ * yellow triangle, blue square, orange L1, strum on the d-pad, + Options,
+ * - (Star Power) Create, stick the left stick, whammy the right stick's x
+ * from centre. Tilt needs the accelerometer and is not mapped yet.
+ */
+
+static const uint16_t wii_ids[][2] = {
+    { 0x057E, 0x0306 },     /* Wii Remote (RVL-CNT-01) */
+    { 0x057E, 0x0330 },     /* Wii Remote Plus (RVL-CNT-01-TR) */
+};
+
+enum { WII_EXT_UNKNOWN, WII_EXT_NONE, WII_EXT_GUITAR, WII_EXT_OTHER };
+
+typedef struct {
+    uint8_t status_asked;   /* a 0x20 is due: the answer to our 0x15 */
+    uint8_t ext;            /* WII_EXT_* */
+    uint8_t rumble;
+} wii_ctx;
+
+#define WII_GUITAR_WHAMMY_REST 0x10
+#define WII_GUITAR_WHAMMY_SPAN 0x0B
+
+static uint32_t wii_core_buttons(const uint8_t *r)
+{
+    uint32_t b = 0;
+
+    if (r[1] & 0x01) b |= PAD_LEFT;
+    if (r[1] & 0x02) b |= PAD_RIGHT;
+    if (r[1] & 0x04) b |= PAD_DOWN;
+    if (r[1] & 0x08) b |= PAD_UP;
+    if (r[1] & 0x10) b |= PAD_OPTIONS;              /* + */
+    if (r[2] & 0x01) b |= PAD_TRIANGLE;             /* 2 */
+    if (r[2] & 0x02) b |= PAD_SQUARE;               /* 1 */
+    if (r[2] & 0x04) b |= PAD_CIRCLE;               /* B */
+    if (r[2] & 0x08) b |= PAD_CROSS;                /* A */
+    if (r[2] & 0x10) b |= PAD_CREATE;               /* - */
+    if (r[2] & 0x80) b |= PAD_PS;                   /* Home */
+    return b;
+}
+
+static uint32_t wii_guitar(const uint8_t *e, pad_state *st)
+{
+    uint8_t b4 = (uint8_t)~e[4], b5 = (uint8_t)~e[5];
+    int sx = e[0] & 0x3F, sy = e[1] & 0x3F, w = (e[3] & 0x1F) - WII_GUITAR_WHAMMY_REST;
+    uint32_t b = 0;
+
+    if (b5 & 0x10) b |= PAD_CROSS;                  /* green */
+    if (b5 & 0x40) b |= PAD_CIRCLE;                 /* red */
+    if (b5 & 0x08) b |= PAD_TRIANGLE;               /* yellow */
+    if (b5 & 0x20) b |= PAD_SQUARE;                 /* blue */
+    if (b5 & 0x80) b |= PAD_L1;                     /* orange */
+    if (b5 & 0x01) b |= PAD_UP;                     /* strum up */
+    if (b4 & 0x40) b |= PAD_DOWN;                   /* strum down */
+    if (b4 & 0x04) b |= PAD_OPTIONS;                /* + */
+    if (b4 & 0x10) b |= PAD_CREATE;                 /* - : Star Power */
+    st->lx = (uint8_t)(sx * 255 / 63);
+    st->ly = (uint8_t)(255 - sy * 255 / 63);
+    if (w < 0) w = 0;
+    if (w > WII_GUITAR_WHAMMY_SPAN) w = WII_GUITAR_WHAMMY_SPAN;
+    st->rx = (uint8_t)(128 + w * 127 / WII_GUITAR_WHAMMY_SPAN);
+    return b;
+}
+
+static void wii_ext_id(wii_ctx *c, const uint8_t *id)
+{
+    static const uint8_t guitar[4] = { 0xA4, 0x20, 0x01, 0x03 };
+    int ext = !memcmp(id + 2, guitar, 4) && id[0] != 0x01 ? WII_EXT_GUITAR : WII_EXT_OTHER;
+
+    if (ext != c->ext)
+        log_line("wii remote: extension %02x%02x%02x%02x%02x%02x (%s)", id[0], id[1], id[2],
+                 id[3], id[4], id[5], ext == WII_EXT_GUITAR ? "Guitar Hero guitar" : "not read");
+    c->ext = (uint8_t)ext;
+}
+
+static int wii_parse(void *ctx, const uint8_t *r, int n, pad_state *st)
+{
+    wii_ctx *c = ctx;
+    int at = -1, full;
+
+    if (n < 3 || r[0] < 0x20 || r[0] > 0x37) return PARSE_NONE;
+    st->buttons = wii_core_buttons(r);
+    st->instrument = c->ext == WII_EXT_GUITAR ? PAD_INSTRUMENT_GUITAR : PAD_INSTRUMENT_NONE;
+
+    switch (r[0]) {
+    case 0x20:
+        if (n < 7) return PARSE_OK;
+        if (!(r[3] & 0x02)) {
+            if (c->ext != WII_EXT_NONE) log_line("wii remote: no extension plugged in");
+            c->ext = WII_EXT_NONE;
+        } else if (c->ext == WII_EXT_NONE) {
+            c->ext = WII_EXT_UNKNOWN;
+        }
+        st->instrument = c->ext == WII_EXT_GUITAR ? PAD_INSTRUMENT_GUITAR : PAD_INSTRUMENT_NONE;
+        {
+            unsigned pct = r[6] * 100u / 0xC8;
+            st->battery_pct = (uint8_t)(pct > 100 ? 100 : pct);
+            st->charging = 0;
+            st->has_battery = 1;
+        }
+        if (c->status_asked) {
+            c->status_asked = 0;
+            return PARSE_OK;
+        }
+        /* Unasked: an extension came or went, and the reporting mode is
+         * back to buttons only. */
+        return PARSE_RESTART;
+    case 0x21:
+        if (n >= 12 && r[4] == 0x00 && r[5] == 0xFA && !(r[3] & 0x0F)) wii_ext_id(c, r + 6);
+        st->instrument = c->ext == WII_EXT_GUITAR ? PAD_INSTRUMENT_GUITAR : PAD_INSTRUMENT_NONE;
+        return PARSE_OK;
+    case 0x32: case 0x34: at = 3; break;
+    case 0x35: at = 6; break;
+    case 0x36: at = 13; break;
+    case 0x37: at = 16; break;
+    default:
+        return PARSE_OK;
+    }
+    if (n < at + 6) return PARSE_OK;
+    if (c->ext == WII_EXT_GUITAR) st->buttons |= wii_guitar(r + at, st);
+    full = c->ext != WII_EXT_UNKNOWN;
+    return full ? PARSE_FULL : PARSE_OK;
+}
+
+static uint8_t wii_leds(const pad_output *o)
+{
+    unsigned player = o->player ? o->player : 1;
+    return (uint8_t)((1u << ((player - 1) & 3)) << 4);
+}
+
+/* Output report 0x11: player LED, and the rumble bit. */
+static int wii_output(void *ctx, const pad_output *o, uint8_t *b, int max)
+{
+    wii_ctx *c = ctx;
+
+    if (max < 2) return 0;
+    c->rumble = (uint8_t)(o->strong || o->weak);
+    b[0] = 0x11;
+    b[1] = wii_leds(o) | c->rumble;
+    return 2;
+}
+
+/* Output report 0x16: write one byte to a register. */
+static int wii_write_reg(const wii_ctx *c, uint32_t addr, uint8_t v, uint8_t *b, int max)
+{
+    if (max < 22) return 0;
+    memset(b, 0, 22);
+    b[0] = 0x16;
+    b[1] = 0x04 | c->rumble;
+    b[2] = (uint8_t)(addr >> 16);
+    b[3] = (uint8_t)(addr >> 8);
+    b[4] = (uint8_t)addr;
+    b[5] = 1;
+    b[6] = v;
+    return 22;
+}
+
+/* LEDs; the extension's unencrypted mode; its id; the status (is one
+ * plugged in); then continuous reports 0x32: buttons and extension data. */
+static int wii_init(void *ctx, int step, const pad_output *o, uint8_t *b, int max)
+{
+    wii_ctx *c = ctx;
+
+    switch (step) {
+    case 0: return wii_output(ctx, o, b, max);
+    case 1: return wii_write_reg(c, 0xA400F0, 0x55, b, max);
+    case 2: return wii_write_reg(c, 0xA400FB, 0x00, b, max);
+    case 3:
+        if (max < 7) return 0;
+        b[0] = 0x17;                                /* read 6 bytes at 0xA400FA */
+        b[1] = 0x04 | c->rumble;
+        b[2] = 0xA4; b[3] = 0x00; b[4] = 0xFA;
+        b[5] = 0x00; b[6] = 0x06;
+        return 7;
+    case 4:
+        if (max < 2) return 0;
+        c->status_asked = 1;
+        b[0] = 0x15;
+        b[1] = c->rumble;
+        return 2;
+    case 5:
+        if (max < 3) return 0;
+        b[0] = 0x12;
+        b[1] = 0x04 | c->rumble;                    /* continuous */
+        b[2] = 0x32;
+        return 3;
+    default:
+        return 0;
+    }
+}
+
 /* ---- the table --------------------------------------------------------- */
 
 #define IDS(t) t, (int)(sizeof t / sizeof t[0])
@@ -526,6 +742,7 @@ static const pad_profile k_profiles[] = {
     { "DualSense",   IDS(ds5_ids),    ds5_parse,    ds5_output,  ds5_init,    1, 0, NULL },
     { "Xbox",        IDS(xbox_ids),   xbox_parse,   xbox_output, NULL,        0, 0, xbox_setup },
     { "Switch Pro",  IDS(switch_ids), switch_parse, NULL,        switch_init, 1, 0, NULL },
+    { "Wii Remote",  IDS(wii_ids),    wii_parse,    wii_output,  wii_init,    1, 0, NULL },
 };
 
 const pad_profile *profile_find(uint16_t vid, uint16_t pid)
@@ -569,6 +786,8 @@ static const struct { uint16_t vid, pid; const char *name; } k_models[] = {
     { 0x057E, 0x2019, "Switch Online N64 Controller" },
     { 0x057E, 0x201A, "Switch Online Mega Drive Controller" },
     { 0x057E, 0x201E, "Switch Online Mega Drive Controller" },
+    { 0x057E, 0x0306, "Wii Remote" },
+    { 0x057E, 0x0330, "Wii Remote Plus" },
     { 0xFFFF, 0x046E, "GameSir G3s" },
     { 0x05AC, 0x022D, "GameSir G3s" },
     { 0xFFFF, 0x046F, "GameSir G4s" },

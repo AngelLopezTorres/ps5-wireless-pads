@@ -348,6 +348,82 @@ static void test_generic(void)
     }
 }
 
+/* Wii Remote with a Guitar Hero guitar: the wake-up sequence, the extension
+ * id, and the guitar's buttons (active low) and axes. */
+static void test_wii(void)
+{
+    const pad_profile *p = profile_find(0x057E, 0x0306);
+    unsigned char ctx[PROFILE_CTX_MAX], b[64];
+    pad_output o = { 0, 0, 0, 0, 0, 2, 0 };
+    pad_state st;
+    unsigned char status[7] = { 0x20, 0x00, 0x00, 0x12, 0x00, 0x00, 0xC8 };
+    unsigned char id[22] = { 0x21, 0x00, 0x00, 0x50, 0x00, 0xFA, 0x00, 0x00, 0xA4, 0x20, 0x01, 0x03 };
+    /* 0x32: core A held; guitar stick centred-ish, whammy fully down, green
+     * and orange held, strum down, Star Power (-). */
+    unsigned char rep[11] = { 0x32, 0x00, 0x08, 0x20, 0x20, 0x0F, 0x1B,
+                              (unsigned char)~(0x40 | 0x10), (unsigned char)~(0x10 | 0x80), 0, 0 };
+    int n;
+
+    printf("Wii Remote with a Guitar Hero guitar\n");
+    CHECK(p && strcmp(p->name, "Wii Remote") == 0);
+    if (!p) return;
+    CHECK(profile_find(0x057E, 0x0330) == p);
+    CHECK(strcmp(pad_display_name(0x057E, 0x0306, p->name), "Wii Remote") == 0);
+    memset(ctx, 0, sizeof ctx);
+
+    n = p->init_report(ctx, 0, &o, b, sizeof b);
+    CHECK(n == 2 && b[0] == 0x11 && b[1] == 0x20);          /* LED 2 */
+    n = p->init_report(ctx, 1, &o, b, sizeof b);
+    CHECK(n == 22 && b[0] == 0x16 && b[1] == 0x04 && b[2] == 0xA4 && b[3] == 0x00 && b[4] == 0xF0 &&
+          b[5] == 1 && b[6] == 0x55);
+    n = p->init_report(ctx, 2, &o, b, sizeof b);
+    CHECK(n == 22 && b[4] == 0xFB && b[6] == 0x00);
+    n = p->init_report(ctx, 3, &o, b, sizeof b);
+    CHECK(n == 7 && b[0] == 0x17 && b[2] == 0xA4 && b[4] == 0xFA && b[6] == 6);
+    n = p->init_report(ctx, 4, &o, b, sizeof b);
+    CHECK(n == 2 && b[0] == 0x15);
+    n = p->init_report(ctx, 5, &o, b, sizeof b);
+    CHECK(n == 3 && b[0] == 0x12 && b[1] == 0x04 && b[2] == 0x32);
+    CHECK(p->init_report(ctx, 6, &o, b, sizeof b) == 0);
+
+    pad_state_reset(&st);
+    /* Before the id is read, the extension bytes are not used. */
+    CHECK(p->parse(ctx, rep, sizeof rep, &st) == PARSE_OK);
+    CHECK(st.buttons == PAD_CROSS);
+    CHECK(st.instrument == PAD_INSTRUMENT_NONE);
+    CHECK(p->parse(ctx, status, sizeof status, &st) == PARSE_OK);   /* the asked one */
+    CHECK(st.has_battery && st.battery_pct == 100);
+    CHECK(p->parse(ctx, id, sizeof id, &st) == PARSE_OK);
+    CHECK(p->parse(ctx, rep, sizeof rep, &st) == PARSE_FULL);
+    CHECK(st.buttons == (PAD_CROSS | PAD_L1 | PAD_DOWN | PAD_CREATE));
+    CHECK(st.instrument == PAD_INSTRUMENT_GUITAR);
+    CHECK(st.lx == 0x20 * 255 / 63 && st.ly == 255 - 0x20 * 255 / 63);
+    CHECK(st.rx == 255);                                    /* whammy down */
+    rep[6] = 0x10;                                          /* whammy at rest */
+    rep[7] = 0xFF; rep[8] = (unsigned char)~(0x40 | 0x01);  /* red, strum up */
+    CHECK(p->parse(ctx, rep, sizeof rep, &st) == PARSE_FULL);
+    CHECK(st.buttons == (PAD_CROSS | PAD_CIRCLE | PAD_UP));
+    CHECK(st.rx == 128);
+
+    /* Unplugged: an unasked status report; the sequence must run again. */
+    status[3] = 0x10;
+    CHECK(p->parse(ctx, status, sizeof status, &st) == PARSE_RESTART);
+    CHECK(st.instrument == PAD_INSTRUMENT_NONE);
+    CHECK(p->parse(ctx, rep, sizeof rep, &st) == PARSE_FULL);
+    CHECK(st.buttons == PAD_CROSS);                         /* guitar bytes ignored */
+    CHECK(st.instrument == PAD_INSTRUMENT_NONE);
+    /* Plugged back in: unknown until its id is read again. */
+    status[3] = 0x12;
+    CHECK(p->parse(ctx, status, sizeof status, &st) == PARSE_RESTART);
+    CHECK(p->parse(ctx, rep, sizeof rep, &st) == PARSE_OK);
+
+    /* Rumble rides on the LED report. */
+    o.strong = 200;
+    n = p->build_output(ctx, &o, b, sizeof b);
+    CHECK(n == 2 && b[0] == 0x11 && b[1] == (0x20 | 0x01));
+    CHECK(!p->parse(ctx, rep, 2, &st));
+}
+
 int main(void)
 {
     test_crc();
@@ -358,6 +434,7 @@ int main(void)
     test_xbox();
     test_switch();
     test_generic();
+    test_wii();
     printf(g_fail ? "%d check(s) failed\n" : "all profile checks passed\n", g_fail);
     return g_fail != 0;
 }

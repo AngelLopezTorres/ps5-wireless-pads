@@ -439,9 +439,12 @@ static void choose_endpoints(usb_ctx *c)
         c->iface = f[0].iface;
         c->ep_events = f[0].ep_events;
         c->ep_acl_in = f[0].ep_acl_in;
-        c->ep_acl_out = f[0].ep_acl_out;
-        for (i = 0; i < f[0].n_other; i++)
-            if (!(f[0].other[i] & 0x80)) { c->ep_acl_out2 = f[0].other[i]; break; }
+        c->ep_acl_out = usb_acl_out_endpoint(c->dd_ok ? UGETW(c->dd.idVendor) : 0,
+                                             c->dd_ok ? UGETW(c->dd.idProduct) : 0,
+                                             &f[0], &c->ep_acl_out2);
+        if (c->ep_acl_out != f[0].ep_acl_out)
+            log_line("usb: ACL out %#x, not the first bulk OUT %#x: this chip drains only %#x",
+                     c->ep_acl_out, f[0].ep_acl_out, c->ep_acl_out);
         c->ev_read_len = f[0].mps_events >= 8 && f[0].mps_events <= 64 ? f[0].mps_events : MPS_EVENTS_DEFAULT;
         return;
     }

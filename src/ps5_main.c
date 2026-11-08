@@ -50,10 +50,15 @@
 #include "util.h"
 #include "version.h"
 #include "web.h"
+#include "xinput_feed.h"
 
+#include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
 #include <sys/time.h>
+
+#include <arpa/inet.h>
+#include <netinet/in.h>
 
 #include <errno.h>
 #include <fcntl.h>
@@ -170,10 +175,50 @@ static void on_connect(void *ud, int slot, const pad_info *info)
     else notify(tr(MSG_CONNECTED_NOVPAD), slot_name(slot), slot + 1);
 }
 
+/* Guitars, also as XInput guitars for a listener on the console itself. */
+static xfeed g_feed;
+static int g_feed_fd = -1;
+
+static void feed_send(void *ctx, const uint8_t *msg, int len)
+{
+    (void)ctx;
+    if (g_feed_fd >= 0) (void)send(g_feed_fd, msg, (size_t)len, 0);
+}
+
+static void feed_open(void)
+{
+    struct sockaddr_in to;
+
+    xfeed_init(&g_feed, feed_send, NULL);
+    g_feed_fd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (g_feed_fd < 0) {
+        log_line("xinput feed: no socket (errno %d), guitars go to the virtual pad only", errno);
+        return;
+    }
+    fcntl(g_feed_fd, F_SETFL, fcntl(g_feed_fd, F_GETFL) | O_NONBLOCK);
+    memset(&to, 0, sizeof to);
+    to.sin_family = AF_INET;
+    to.sin_port = htons(XFEED_PORT);
+    to.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    if (connect(g_feed_fd, (struct sockaddr *)&to, sizeof to) != 0) {
+        log_line("xinput feed: cannot address 127.0.0.1:%d (errno %d)", XFEED_PORT, errno);
+        close(g_feed_fd);
+        g_feed_fd = -1;
+    }
+}
+
+static void feed_close(void)
+{
+    xfeed_close(&g_feed);
+    if (g_feed_fd >= 0) close(g_feed_fd);
+    g_feed_fd = -1;
+}
+
 static void on_state(void *ud, int slot, const pad_state *st)
 {
     (void)ud;
     vpad_update(slot, st);
+    xfeed_state(&g_feed, slot, st, now_ms());
 }
 
 /* The menu's PS button: the same as holding PS on that pad. */
@@ -183,9 +228,27 @@ static int web_press_ps(int slot)
     return g_vpad_ok && vpad_press_ps(slot, PS_HOLD_MS);
 }
 
+/* The player number each pad shows, once its user is known: 0 none set. */
+static int g_shown_player[HOST_MAX_PADS];
+
+static void show_players(void)
+{
+    int i, p;
+
+    for (i = 0; i < HOST_MAX_PADS; i++) {
+        p = vpad_player(i);
+        if (p < 1 || p == g_shown_player[i]) continue;
+        if (!host_set_player(g_host, i, p)) continue;
+        g_shown_player[i] = p;
+        log_line("slot %d: lights show player %d, its user's signed-in position + 1", i, p);
+    }
+}
+
 static void on_disconnect(void *ud, int slot)
 {
     (void)ud;
+    xfeed_gone(&g_feed, slot);
+    if (slot >= 0 && slot < HOST_MAX_PADS) g_shown_player[slot] = 0;
     vpad_remove(slot);
     notify(tr(MSG_DISCONNECTED), slot_name(slot), slot + 1);
 }
@@ -300,6 +363,7 @@ static void rest_suspend(void)
     notify("%s", tr(MSG_REST_MODE));
     host_close(g_host);                 /* our links; removes our virtual pads; closes the chip */
     g_host = NULL;
+    xfeed_close(&g_feed);               /* the socket stays: nothing to reopen on waking */
     if (g_vpad_ok) {
         g_bt_state = WEB_BT_TRYING;     /* tried again on waking */
         vpad_creds_restore();
@@ -377,6 +441,7 @@ int main(void)
     g_wc.version = PADBRIDGE_VERSION;
     g_wc.press_ps = web_press_ps;
     web_open(now_ms());
+    feed_open();
 
     sysinfo_log();
 
@@ -424,6 +489,8 @@ int main(void)
         now = now_ms();
         web_poll(g_web);
         if (g_vpad_ok) vpad_poll(now);
+        if (g_vpad_ok && g_host) show_players();
+        xfeed_tick(&g_feed, now);
 
         /* Rest mode on its way: let go cleanly before it, not after. */
         if (now - last_power >= suspend_poll_ms(&rest)) {
@@ -457,6 +524,7 @@ int main(void)
     web_stop(g_web);
     host_close(g_host);                 /* our links; removes our virtual pads */
     g_host = NULL;
+    feed_close();                       /* any guitar left: gone */
     if (g_vpad_ok) {
         vpad_creds_restore();           /* leave the credentials as found */
     }

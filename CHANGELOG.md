@@ -5,6 +5,15 @@ version is set in `src/version.h` and is also in the first line of the log, in
 the start-up notification, on the web page, and in the binary
 (`strings PadBridge-PS5-*.elf | grep padbridge-version`).
 
+## Unreleased
+
+- Controllers: Wii Remote (`057e:0306`) and Wii Remote Plus (`057e:0330`) over Classic Bluetooth, paired with the red Sync button. The pad's name is asked before authentication and selects the Wii PIN (the console's address as six binary bytes); every other pad keeps its PIN and Secure Simple Pairing. A Guitar Hero guitar on the remote is read and mapped as PlayStation guitars report. Player LEDs show the console's player number. See `docs/WII_PAIRING.md`. Verified with a Guitar Hero World Tour guitar on PS5 FW 5.50.
+- Bluetooth: on the PS5's MediaTek chip (`0e8d:3603`), ACL is written to bulk OUT `0x02` from the first packet, since the chip drains only that one (`docs/PS5_ACL_OUT.md`). Other chips are unchanged.
+- Bluetooth: pairing survives lost events and unanswered name requests and pages (cancelled and retried), HID channels are opened once encryption is on and retried with a fresh cid, page scan is turned down while a pad is paged or linked, and searching stops once a pad is paired.
+- Guitars are also sent as XInput guitars to UDP 127.0.0.1:8097, for Windows games run through prospero-win (read in its `[input] mode = xinput`). Nothing listening costs nothing.
+- Logs: the chip's own settings while pairing, and which console user and player number each controller gets (never PIN or key bytes).
+- Host tests: `test_wii_pairing` (pairing and the guitar through the simulator) and `test_xinput_feed`.
+
 ## 0.2.0-beta
 
 First release of the ps5-wireless-pads fork (based on PadBridge PS5 0.1.9-beta). Not yet tested on a console.

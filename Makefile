@@ -59,6 +59,14 @@ $(BUILD)/test_config: src/config.c src/hotkey.c src/netinfo.c src/log.c src/util
 $(BUILD)/test_lock: src/lock.c src/instance.c src/log.c src/util.c tests/test_lock.c | $(BUILD)
 	cc $(HOST_CFLAGS) -o $@ $^
 
+# Wii Remote pairing and the guitar, through the host simulator.
+$(BUILD)/test_wii_pairing: $(CORE) tests/sim.c tests/test_wii_pairing.c | $(BUILD)
+	cc $(HOST_CFLAGS) -o $@ $^
+
+# A guitar's state as an XInput message.
+$(BUILD)/test_xinput_feed: src/xinput_feed.c src/log.c src/util.c tests/test_xinput_feed.c | $(BUILD)
+	cc $(HOST_CFLAGS) -o $@ $^
+
 # Rest mode: when to suspend and when to resume.
 $(BUILD)/test_suspend: src/suspend.c tests/test_suspend.c | $(BUILD)
 	cc $(HOST_CFLAGS) -o $@ $^
@@ -79,7 +87,9 @@ $(BUILD)/test_i18n: src/i18n.c tests/test_i18n.c | $(BUILD)
 $(BUILD)/test_usb: src/usb_desc.c src/evstream.c tests/test_usb.c | $(BUILD)
 	cc $(HOST_CFLAGS) -o $@ $^
 
-test: $(BUILD)/test_usb $(BUILD)/test_lock $(BUILD)/test_config $(BUILD)/test_vpad $(BUILD)/test_crypto $(BUILD)/test_profiles $(BUILD)/test_host $(BUILD)/test_le $(BUILD)/test_web $(BUILD)/test_launcher $(BUILD)/test_i18n $(BUILD)/test_suspend
+test: $(BUILD)/test_usb $(BUILD)/test_lock $(BUILD)/test_config $(BUILD)/test_vpad $(BUILD)/test_crypto $(BUILD)/test_profiles $(BUILD)/test_host $(BUILD)/test_le $(BUILD)/test_web $(BUILD)/test_launcher $(BUILD)/test_i18n $(BUILD)/test_suspend $(BUILD)/test_xinput_feed $(BUILD)/test_wii_pairing
+	./$(BUILD)/test_wii_pairing
+	./$(BUILD)/test_xinput_feed
 	./$(BUILD)/test_usb
 	./$(BUILD)/test_lock
 	./$(BUILD)/test_config

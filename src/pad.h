@@ -40,7 +40,11 @@ typedef struct {
 
     uint8_t  has_battery;
     uint8_t  battery_pct, charging;
+
+    uint8_t  instrument;            /* PAD_INSTRUMENT_*: a guitar is also sent to XInput */
 } pad_state;
+
+enum { PAD_INSTRUMENT_NONE, PAD_INSTRUMENT_GUITAR };
 
 /* What the console asks of the controller. */
 typedef struct {
